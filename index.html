@@ -16,6 +16,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@700;900&family=JetBrains+Mono:wght@400;700&family=Archivo:wght@500;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<script src="med.js"></script>
 <style>
 :root{
   --kraft:#c8a26a; --kraft-d:#a9824b; --paper:#f5efe3; --ink:#141210;
@@ -183,6 +184,43 @@ code{font-family:var(--mono);font-size:.88em;background:var(--tape);padding:1px 
 .banner{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:14px;margin-bottom:18px;background:var(--hot)}
 .stack{display:flex;flex-direction:column;gap:12px}
 .btn.big{width:100%;padding:17px;font-size:15px}
+
+/* ---------- medicines & expiry ---------- */
+.snap.med{background:var(--hot);color:var(--ink);box-shadow:4px 4px 0 var(--ink);margin-top:-4px}
+.exp{position:relative;flex:none;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.04em;
+  padding:5px 6px;border:2px solid var(--ink);white-space:nowrap;line-height:1}
+.exp input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:16px}
+.exp.bad{background:#d7261e;color:#fff}
+.exp.warn{background:#ffb000;color:var(--ink)}
+.exp.ok{background:#2f9e44;color:#fff}
+.exp.none{border:2px dashed #9c8f78;color:var(--muted);background:transparent}
+.items li .nm{min-width:60px}
+.expstrip{margin:0 0 20px}
+.expstrip .hd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
+.expstrip .hd b{font-family:var(--stencil);font-size:26px;letter-spacing:.03em}
+.expstrip .hd a{font-family:var(--mono);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.exprow{display:flex;gap:12px;overflow-x:auto;padding:2px 6px 10px 2px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}
+.expcard{flex:none;width:148px;scroll-snap-align:start;padding:10px;text-decoration:none;display:flex;flex-direction:column;gap:6px}
+.expcard img{width:100%;height:72px;object-fit:cover;border:2px solid var(--ink)}
+.expcard .nm2{font-weight:800;font-size:14px;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.expcard .exp{align-self:flex-start}
+.allgood{padding:12px 14px;font-family:var(--mono);font-size:12px}
+.grp{font-family:var(--stencil);font-size:24px;letter-spacing:.04em;margin:22px 2px 10px;display:flex;align-items:center;gap:10px}
+.grp i{width:14px;height:14px;border:2px solid var(--ink);display:inline-block}
+.bx-exp{display:inline-block;margin-top:6px;font-family:var(--mono);font-size:10px;font-weight:700;padding:3px 5px;border:2px solid var(--ink)}
+.bx-exp.bad{background:#d7261e;color:#fff}.bx-exp.warn{background:#ffb000}
+.sheet-bg{position:fixed;inset:0;z-index:70;background:rgba(20,18,16,.6);display:flex;align-items:flex-end;justify-content:center}
+.msheet{width:100%;max-width:560px;max-height:92vh;overflow:auto;border-bottom:none;padding:18px 18px calc(18px + env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;gap:12px;animation:up .2s ease-out}
+@keyframes up{from{transform:translateY(40px);opacity:0}}
+.msheet h2{font-family:var(--stencil);font-size:28px;letter-spacing:.03em}
+.ms-top{display:flex;gap:12px;align-items:center}
+.ms-top img{width:84px;height:84px;object-fit:cover;border:2.5px solid var(--ink);flex:none}
+.prog{height:8px;border:2px solid var(--ink);margin-top:8px;background:#fff}
+.prog i{display:block;height:100%;width:8%;background:var(--hot);transition:width .25s}
+.ms-st{font-family:var(--mono);font-size:13px;font-weight:700}
+.ms-st.good{color:#1f7a33}.ms-st.warn{color:#9a5b00}
+#mhint a{color:var(--ink)}
 
 /* ---------- phone ---------- */
 @media(max-width:600px){
@@ -364,7 +402,115 @@ async function compress(file) {
   return c.toDataURL('image/jpeg', 0.72);
 }
 
+/* ================= expiry helpers ================= */
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function expInfo(exp) {
+  if (!exp) return null;
+  const [y, m, d] = exp.split('-').map(Number);
+  const end = d ? new Date(y, m - 1, d, 23, 59) : new Date(y, m, 0, 23, 59);
+  const days = Math.ceil((end - Date.now()) / 864e5);
+  const cls = days < 0 ? 'bad' : days <= 60 ? 'warn' : 'ok';
+  const label = (d ? pad(d) + ' ' : '') + MONTHS[m - 1] + ' ' + String(y).slice(2);
+  const when = days < 0 ? 'expired' : days === 0 ? 'today' : days <= 60 ? days + ' days left' : Math.round(days / 30) + ' months left';
+  return { days, cls, label, when, end };
+}
+const expChip = (it, i) => {
+  const x = expInfo(it.exp);
+  return `<label class="exp ${x ? x.cls : 'none'}" title="Expiry">${x ? (x.days < 0 ? 'EXPIRED' : 'EXP') + ' ' + x.label.toUpperCase() : '+EXP'}<input type="month" data-ex="${i}" value="${it.exp ? it.exp.slice(0, 7) : ''}"></label>`;
+};
+const allExpiring = () => boxes.flatMap(b => b.items.map((it, i) => ({ it, i, b, x: expInfo(it.exp) })).filter(r => r.x))
+  .sort((a, c) => a.x.days - c.x.days);
+
+function calendarFile() {
+  const ymd = d => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const txt = s => String(s).replace(/[\;,]/g, m => '\\' + m).replace(/\n/g, '\\n');
+  const now = new Date(), stamp = now.toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//BOXBASE//Expiry//EN', 'CALSCALE:GREGORIAN', 'X-WR-CALNAME:BOXBASE expiry'];
+  let n = 0;
+  for (const { it, b, x } of allExpiring()) {
+    if (x.days < 0) continue;
+    const day = new Date(x.end); day.setDate(day.getDate() - 14);
+    if (day < now) { day.setTime(now.getTime()); day.setDate(day.getDate() + 1); }
+    const next = new Date(day); next.setDate(next.getDate() + 1);
+    L.push('BEGIN:VEVENT', `UID:boxbase-${b.id}-${txt(it.n).replace(/\W/g, '')}-${it.exp}@boxbase`, `DTSTAMP:${stamp}`,
+      `DTSTART;VALUE=DATE:${ymd(day)}`, `DTEND;VALUE=DATE:${ymd(next)}`,
+      `SUMMARY:${txt('Expiring: ' + (it.n || 'item') + ' (Box ' + b.id + ')')}`,
+      `DESCRIPTION:${txt('Expires ' + x.label + '. In Box ' + b.id + (b.location ? ' · ' + b.location : '') + '. ' + boxUrl(b.id))}`,
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Medicine expiring soon', 'TRIGGER:PT9H', 'END:VALARM', 'END:VEVENT');
+    n++;
+  }
+  L.push('END:VCALENDAR');
+  return n ? new File([L.join('\r\n')], 'boxbase-expiry.ics', { type: 'text/calendar' }) : null;
+}
+
+/* ---------- 💊 medicine sheet: photo → name + expiry ---------- */
+function medSheet(boxId, file) {
+  const b = byId(boxId);
+  const bg = document.createElement('div'); bg.className = 'sheet-bg';
+  bg.innerHTML = `<div class="msheet card">
+    <h2>💊 NEW MEDICINE</h2>
+    <div class="ms-top"><img id="mimg" alt=""><div style="flex:1;min-width:0"><div class="ms-st" id="mst">Starting…</div><div class="prog"><i id="mpr"></i></div></div></div>
+    <label><div class="tag">Name</div><input class="field" id="mn" placeholder="e.g. Dolo 650" autocomplete="off"></label>
+    <div class="row" style="gap:14px;flex-wrap:nowrap">
+      <label style="flex:2;min-width:0"><div class="tag">Expiry month</div><input class="field" type="month" id="mex"></label>
+      <label style="flex:1;min-width:0"><div class="tag">Qty</div><input class="field" type="number" inputmode="numeric" min="1" id="mq" value="1"></label>
+    </div>
+    <div class="tag" id="mhint"></div>
+    <label class="btn" style="text-align:center">📷 Snap the side with EXP<input type="file" accept="image/*" capture="environment" id="mext" hidden></label>
+    <div class="row" style="flex-wrap:nowrap"><button class="btn ghost" id="mcancel" style="flex:1">Cancel</button><button class="btn hot" id="msave" style="flex:2">Save medicine</button></div>
+  </div>`;
+  document.body.append(bg);
+  const $m = s => bg.querySelector(s);
+  const st = $m('#mst'), pr = $m('#mpr'), mn = $m('#mn'), mex = $m('#mex'), hint = $m('#mhint');
+  const touched = {};
+  mn.oninput = () => touched.n = 1; mex.oninput = () => touched.e = 1;
+  let scannedExp = null, photoP = compress(file), busy = 0;
+  $m('#mimg').src = URL.createObjectURL(file);
+  const close = () => bg.remove();
+  $m('#mcancel').onclick = close;
+  bg.onclick = e => { if (e.target === bg) close(); };
+
+  async function run(f, wantName) {
+    busy++;
+    try {
+      const r = await MedScan.scan(f, { wantName, onStatus: (msg, p) => { st.className = 'ms-st'; st.textContent = msg; pr.style.width = (p == null ? 12 : 12 + p * 88) + '%'; } });
+      if (wantName && r.name && !touched.n && !mn.value) mn.value = r.name;
+      if (r.exp && !touched.e) { mex.value = r.exp.slice(0, 7); scannedExp = r.exp; }
+      pr.style.width = '100%';
+      const gotExp = !!mex.value;
+      st.className = 'ms-st ' + (gotExp && r.expSure ? 'good' : 'warn');
+      st.textContent = gotExp ? (r.expSure ? '✓ Found it — check & save' : 'Check the expiry date ↓') : 'No expiry found — snap the EXP side, or pick it ↓';
+      hint.innerHTML = [r.via.includes('code') ? 'read from the pack’s code' : r.via.includes('text') ? 'read from printed text' : '',
+        r.batch ? 'batch ' + esc(r.batch) : '', r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">pack’s QR link ↗</a>` : ''].filter(Boolean).join(' · ');
+    } catch (e) { console.error(e); st.className = 'ms-st warn'; st.textContent = 'Couldn’t read it — type it in'; pr.style.width = '100%'; }
+    busy--;
+  }
+  run(file, true);
+  $m('#mext').onchange = e => { const f = e.target.files[0]; if (f) { touched.e = 0; run(f, !mn.value); } };
+  $m('#msave').onclick = async () => {
+    const n = mn.value.trim();
+    if (!n && !mex.value) return toast('Add a name or expiry');
+    const exp = mex.value ? (scannedExp && scannedExp.startsWith(mex.value) ? scannedExp : mex.value) : null;
+    b.items.push({ n, q: Math.max(1, parseInt($m('#mq').value) || 1), p: await photoP, exp, med: true });
+    await save(b); close(); toast('Saved ' + (n || 'medicine')); viewBox(boxId);
+  };
+}
+
 /* ================= views ================= */
+function expStrip() {
+  const all = allExpiring(); if (!all.length) return '';
+  const soon = all.filter(r => r.x.days <= 60);
+  const bad = soon.filter(r => r.x.days < 0).length;
+  const card = r => `<a class="expcard card" href="#/box/${encodeURIComponent(r.b.id)}">
+      ${r.it.p ? `<img src="${r.it.p}" alt="">` : ''}<div class="nm2">${esc(r.it.n || 'Unnamed')}</div>
+      <span class="exp ${r.x.cls}">${r.x.days < 0 ? 'EXPIRED' : r.x.when.toUpperCase()}</span><div class="tag">Box ${esc(r.b.id)}</div></a>`;
+  return `<section class="expstrip">
+    <div class="hd"><b>${bad ? '⚠ ' : ''}EXPIRY</b><a href="#/expiry">${all.length} tracked →</a></div>
+    ${soon.length ? `<div class="exprow">${soon.slice(0, 12).map(card).join('')}</div>`
+      : `<div class="allgood card">✓ Nothing expiring in the next 2 months. Next: <b>${esc(all[0].it.n || 'item')}</b> · ${all[0].x.label}</div>`}
+  </section>`;
+}
+
 function viewHome(focus = false) {
   const list = sorted();
   const totalItems = list.reduce((s, b) => s + b.items.length, 0);
@@ -372,6 +518,7 @@ function viewHome(focus = false) {
   app.innerHTML = `
     ${boxes.length && dirty ? `<div class="banner card"><div><b>${dirty} change${dirty > 1 ? 's' : ''} not backed up</b><div class="tag" style="color:var(--ink)">last backup: ${ago(last)}</div></div><button class="btn ink" id="bk">Save backup</button></div>` : ''}
     <div class="search"><b>⌕</b><input id="q" placeholder="Where's the… passport? charger? winter quilt?" autocomplete="off" enterkeyhint="search"></div>
+    ${expStrip()}
     <div class="stats">
       <div><strong>${list.length}</strong>boxes</div>
       <div><strong>${totalItems}</strong>items</div>
@@ -390,7 +537,7 @@ function viewHome(focus = false) {
     }
     const hits = [];
     for (const b of list) {
-      for (const it of b.items) if (it.n.toLowerCase().includes(term)) hits.push({ b, text: it.n, q: it.q, p: it.p });
+      for (const it of b.items) if (it.n.toLowerCase().includes(term)) hits.push({ b, text: it.n, q: it.q, p: it.p, x: expInfo(it.exp) });
       if ([b.name, b.location, b.category, b.notes].some(f => (f || '').toLowerCase().includes(term)))
         hits.push({ b, text: b.name || 'Box ' + b.id, boxMatch: true });
     }
@@ -399,6 +546,7 @@ function viewHome(focus = false) {
       <a class="hit card" href="#/box/${encodeURIComponent(h.b.id)}">
         <div class="n">${esc(h.b.id)}</div>
         <div><div style="font-weight:800;font-size:17px">${hl(h.text)}${h.q > 1 ? ` <span class="tag">×${h.q}</span>` : ''}</div>
+        ${h.x ? `<span class="exp ${h.x.cls}" style="display:inline-block;margin:4px 0">${h.x.days < 0 ? 'EXPIRED' : 'EXP'} ${h.x.label.toUpperCase()}</span>` : ''}
         <div class="tag">${h.boxMatch ? 'box' : 'in ' + esc(h.b.name || 'Box ' + h.b.id)}${h.b.location ? ' · ' + esc(h.b.location) : ''}</div></div>
         ${h.p ? `<img class="hp" src="${h.p}" alt="">` : ''}
       </a>`).join('')}</div>` : `<div class="empty">Nothing matches “${esc(term)}”.</div>`;
@@ -416,6 +564,8 @@ function boxCard(b) {
     <div class="num"><small>№</small>${esc(b.id)}</div>
     <h3>${esc(b.name || 'Untitled box')}</h3>
     <div class="meta tag">${b.items.length} item${b.items.length === 1 ? '' : 's'}${b.location ? ' · ' + esc(b.location) : ''}</div>
+    ${(() => { const xs = b.items.map(i => expInfo(i.exp)).filter(Boolean), bad = xs.filter(x => x.days < 0).length, warn = xs.filter(x => x.days >= 0 && x.days <= 60).length;
+      return bad ? `<span class="bx-exp bad">${bad} expired</span>` : warn ? `<span class="bx-exp warn">${warn} expiring</span>` : ''; })()}
     ${peek ? `<div class="peek">${esc(peek)}</div>` : ''}
   </a>`;
 }
@@ -458,6 +608,9 @@ function viewBox(id) {
           SNAP AN ITEM
           <input type="file" accept="image/*" capture="environment" multiple id="snapi" hidden>
         </label>
+        <label class="snap med">💊 SNAP MEDICINE
+          <input type="file" accept="image/*" capture="environment" id="medi" hidden>
+        </label>
         <form class="add" id="addf">
           <input class="field" id="addi" placeholder="…or type: towels, 3x mugs" autocomplete="off">
           <button class="btn hot">Add</button>
@@ -465,7 +618,7 @@ function viewBox(id) {
         <ul class="items" id="items">${b.items.map((it, i) => `
           <li>${it.p ? `<img class="it-ph" src="${it.p}" data-iv="${i}" alt="">` : `<label class="it-add" title="Add photo">＋<input type="file" accept="image/*" capture="environment" data-ip="${i}" hidden></label>`}
             <input class="nm" data-nm="${i}" value="${esc(it.n)}" placeholder="Name this item…">
-            ${it.q > 1 ? `<em class="q">×${it.q}</em>` : ''}<button class="x" data-del="${i}" aria-label="remove">✕</button></li>`).join('') || '<li class="tag" style="border:none">Nothing logged yet — snap your first item.</li>'}
+            ${it.q > 1 ? `<em class="q">×${it.q}</em>` : ''}${expChip(it, i)}<button class="x" data-del="${i}" aria-label="remove">✕</button></li>`).join('') || '<li class="tag" style="border:none">Nothing logged yet — snap your first item.</li>'}
         </ul>
         <label class="l"><div class="tag">Notes</div>
           <textarea class="field" data-f="notes" rows="2" placeholder="Fragile, open from top…">${esc(b.notes)}</textarea></label>
@@ -522,8 +675,14 @@ function viewBox(id) {
     }
     if (t.dataset.iv != null) showImg(b.items[+t.dataset.iv].p);
   };
+  $('#medi').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) medSheet(id, f); };
   items.onchange = async e => {
     const t = e.target;
+    if (t.dataset.ex != null) {                           // set / clear expiry month
+      const it = b.items[+t.dataset.ex];
+      if (t.value) it.exp = it.exp && it.exp.startsWith(t.value) ? it.exp : t.value; else delete it.exp;
+      await save(b); return viewBox(id);
+    }
     if (t.dataset.ip != null && t.files[0]) {           // add photo to existing item
       b.items[+t.dataset.ip].p = await compress(t.files[0]); await save(b); return viewBox(id);
     }
@@ -634,15 +793,52 @@ function viewData() {
     if (prompt('Type ERASE to delete everything') !== 'ERASE') return; await DB.clear(); boxes = []; location.hash = '#/'; };
 }
 
+function viewExpiry() {
+  const all = allExpiring();
+  const groups = [
+    ['EXPIRED — THROW OUT', 'bad', r => r.x.days < 0],
+    ['NEXT 30 DAYS', 'warn', r => r.x.days >= 0 && r.x.days <= 30],
+    ['NEXT 3 MONTHS', 'warn', r => r.x.days > 30 && r.x.days <= 90],
+    ['LATER', 'ok', r => r.x.days > 90],
+  ];
+  const color = { bad: '#d7261e', warn: '#ffb000', ok: '#2f9e44' };
+  app.innerHTML = all.length ? `
+    <div class="row"><button class="btn ink" id="cal" style="flex:1">📅 Add reminders to calendar</button></div>
+    <p class="tag" style="margin:10px 2px 0">A calendar alert 2 weeks before each expiry.</p>
+    ${groups.map(([t, c, f]) => { const rows = all.filter(f); return rows.length ? `
+      <div class="grp"><i style="background:${color[c]}"></i>${t} <span class="tag">${rows.length}</span></div>
+      <div class="hits">${rows.map(r => `
+        <div class="hit card">
+          <a href="#/box/${encodeURIComponent(r.b.id)}" style="display:flex;align-items:center;gap:12px;flex:1;min-width:0;text-decoration:none">
+            ${r.it.p ? `<img class="hp" src="${r.it.p}" alt="" style="margin:0">` : `<div class="n" style="min-width:0">${esc(r.b.id)}</div>`}
+            <div style="min-width:0"><div style="font-weight:800;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.it.n || 'Unnamed')}${r.it.q > 1 ? ` <span class="tag">×${r.it.q}</span>` : ''}</div>
+            <div class="tag">Box ${esc(r.b.id)}${r.b.location ? ' · ' + esc(r.b.location) : ''} · ${r.x.when}</div></div>
+          </a>
+          ${r.x.days < 0 ? `<button class="btn" data-gone="${esc(r.b.id)}|${r.i}" style="padding:8px 10px;font-size:11px">Thrown out</button>`
+            : `<span class="exp ${r.x.cls}">${r.x.label.toUpperCase()}</span>`}
+        </div>`).join('')}</div>` : ''; }).join('')}`
+    : `<div class="empty">No expiry dates yet.<br>Open a box → <b>💊 Snap medicine</b>, or tap <b>+EXP</b> on any item.</div>`;
+  $('#cal')?.addEventListener('click', () => {
+    const f = calendarFile(); if (!f) return toast('Nothing upcoming to remind');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; a.click();
+    toast('Open the file to add to your calendar');
+  });
+  app.querySelectorAll('[data-gone]').forEach(btn => btn.onclick = async () => {
+    const [bid, i] = btn.dataset.gone.split('|'); const b = byId(bid);
+    if (!confirm(`Remove “${b.items[+i].n || 'item'}” from Box ${bid}?`)) return;
+    b.items.splice(+i, 1); await save(b); viewExpiry();
+  });
+}
+
 /* ================= router ================= */
 async function render() {
   const [path, qs] = location.hash.slice(1).split('?');
   const parts = (path || '/').split('/').filter(Boolean);
   const params = new URLSearchParams(qs || '');
   const route = parts[0] || 'home';
-  const tab = route === 'box' || route === 'new' ? 'home' : route;
+  const tab = route === 'box' || route === 'new' || route === 'expiry' ? 'home' : route;
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === tab));
-  const titles = { labels: 'LABELS', data: 'BACKUP', search: 'FIND' };
+  const titles = { labels: 'LABELS', data: 'BACKUP', search: 'FIND', expiry: 'EXPIRY' };
   $('#bar').innerHTML = route === 'box'
     ? `<a class="back" href="#/"><b>‹</b> Boxes</a><span class="ttl">BOX ${esc(decodeURIComponent(parts[1] || ''))}</span>`
     : `<a class="logo" href="#/">BOX<span>BASE</span></a>${titles[route] ? `<span class="ttl" style="color:#9b9183">${titles[route]}</span>` : ''}`;
@@ -651,6 +847,7 @@ async function render() {
   if (route === 'box') return viewBox(decodeURIComponent(parts[1] || ''));
   if (route === 'labels') return viewLabels(params);
   if (route === 'data') return viewData();
+  if (route === 'expiry') return viewExpiry();
   viewHome(route === 'search');
 }
 window.addEventListener('hashchange', render);
