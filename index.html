@@ -222,6 +222,25 @@ code{font-family:var(--mono);font-size:.88em;background:var(--tape);padding:1px 
 .ms-st.good{color:#1f7a33}.ms-st.warn{color:#9a5b00}
 #mhint a{color:var(--ink)}
 
+/* medicine rows: name on top, qty stepper + sealed/opened + expiry below */
+.items li.medrow{align-items:flex-start}
+.mcol{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.mcol .nm{width:100%}
+.msub{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.items li .stp{flex:none}
+.stp{display:inline-flex;align-items:stretch;border:2px solid var(--ink);background:#fff;height:32px}
+.stp button{width:32px;border:none;background:transparent;font-family:var(--mono);font-weight:700;font-size:17px;line-height:1;padding:0}
+.stp button:active{background:var(--hot)}
+.stp b{min-width:26px;display:grid;place-items:center;font-family:var(--mono);font-size:13px;border-left:2px solid var(--ink);border-right:2px solid var(--ink)}
+.seal{height:32px;padding:0 8px;border:2px solid var(--ink);background:#fff;font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.05em;white-space:nowrap}
+.seal.open{background:var(--ink);color:var(--paper)}
+.seal.open::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--hot);margin-right:5px;vertical-align:1px}
+.msub .exp{height:32px;display:inline-flex;align-items:center}
+.seg{display:flex;border:2.5px solid var(--ink)}
+.seg button{flex:1;padding:11px 6px;border:none;background:#fff;font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.seg button+button{border-left:2.5px solid var(--ink)}
+.seg button.on{background:var(--ink);color:var(--paper)}
+
 /* ---------- phone ---------- */
 @media(max-width:600px){
   main{padding-top:16px}
@@ -418,6 +437,9 @@ const expChip = (it, i) => {
   const x = expInfo(it.exp);
   return `<label class="exp ${x ? x.cls : 'none'}" title="Expiry">${x ? (x.days < 0 ? 'EXPIRED' : 'EXP') + ' ' + x.label.toUpperCase() : '+EXP'}<input type="month" data-ex="${i}" value="${it.exp ? it.exp.slice(0, 7) : ''}"></label>`;
 };
+const isMed = it => !!(it.med || it.exp || it.opened !== undefined);
+const shortDate = iso => { const d = new Date(iso); return d.getDate() + ' ' + MONTHS[d.getMonth()]; };
+const openTxt = it => it.opened ? 'opened ' + shortDate(it.opened) : 'sealed';
 const allExpiring = () => boxes.flatMap(b => b.items.map((it, i) => ({ it, i, b, x: expInfo(it.exp) })).filter(r => r.x))
   .sort((a, c) => a.x.days - c.x.days);
 
@@ -455,6 +477,8 @@ function medSheet(boxId, file) {
       <label style="flex:2;min-width:0"><div class="tag">Expiry month</div><input class="field" type="month" id="mex"></label>
       <label style="flex:1;min-width:0"><div class="tag">Qty</div><input class="field" type="number" inputmode="numeric" min="1" id="mq" value="1"></label>
     </div>
+    <div><div class="tag" style="margin-bottom:6px">Condition</div>
+      <div class="seg" id="mseg"><button type="button" class="on" data-v="0">Sealed</button><button type="button" data-v="1">Opened</button></div></div>
     <div class="tag" id="mhint"></div>
     <label class="btn" style="text-align:center">📷 Snap the side with EXP<input type="file" accept="image/*" capture="environment" id="mext" hidden></label>
     <div class="row" style="flex-wrap:nowrap"><button class="btn ghost" id="mcancel" style="flex:1">Cancel</button><button class="btn hot" id="msave" style="flex:2">Save medicine</button></div>
@@ -464,7 +488,9 @@ function medSheet(boxId, file) {
   const st = $m('#mst'), pr = $m('#mpr'), mn = $m('#mn'), mex = $m('#mex'), hint = $m('#mhint');
   const touched = {};
   mn.oninput = () => touched.n = 1; mex.oninput = () => touched.e = 1;
-  let scannedExp = null, photoP = compress(file), busy = 0;
+  let scannedExp = null, photoP = compress(file), busy = 0, opened = false;
+  $m('#mseg').onclick = e => { const v = e.target.dataset.v; if (v == null) return; opened = v === '1';
+    $m('#mseg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === e.target)); };
   $m('#mimg').src = URL.createObjectURL(file);
   const close = () => bg.remove();
   $m('#mcancel').onclick = close;
@@ -491,7 +517,7 @@ function medSheet(boxId, file) {
     const n = mn.value.trim();
     if (!n && !mex.value) return toast('Add a name or expiry');
     const exp = mex.value ? (scannedExp && scannedExp.startsWith(mex.value) ? scannedExp : mex.value) : null;
-    b.items.push({ n, q: Math.max(1, parseInt($m('#mq').value) || 1), p: await photoP, exp, med: true });
+    b.items.push({ n, q: Math.max(1, parseInt($m('#mq').value) || 1), p: await photoP, exp, med: true, opened: opened ? new Date().toISOString().slice(0, 10) : null });
     await save(b); close(); toast('Saved ' + (n || 'medicine')); viewBox(boxId);
   };
 }
@@ -503,7 +529,7 @@ function expStrip() {
   const bad = soon.filter(r => r.x.days < 0).length;
   const card = r => `<a class="expcard card" href="#/box/${encodeURIComponent(r.b.id)}">
       ${r.it.p ? `<img src="${r.it.p}" alt="">` : ''}<div class="nm2">${esc(r.it.n || 'Unnamed')}</div>
-      <span class="exp ${r.x.cls}">${r.x.days < 0 ? 'EXPIRED' : r.x.when.toUpperCase()}</span><div class="tag">Box ${esc(r.b.id)}</div></a>`;
+      <span class="exp ${r.x.cls}">${r.x.days < 0 ? 'EXPIRED' : r.x.when.toUpperCase()}</span><div class="tag">Box ${esc(r.b.id)}${r.it.opened ? ' · opened' : ''}</div></a>`;
   return `<section class="expstrip">
     <div class="hd"><b>${bad ? '⚠ ' : ''}EXPIRY</b><a href="#/expiry">${all.length} tracked →</a></div>
     ${soon.length ? `<div class="exprow">${soon.slice(0, 12).map(card).join('')}</div>`
@@ -537,7 +563,7 @@ function viewHome(focus = false) {
     }
     const hits = [];
     for (const b of list) {
-      for (const it of b.items) if (it.n.toLowerCase().includes(term)) hits.push({ b, text: it.n, q: it.q, p: it.p, x: expInfo(it.exp) });
+      for (const it of b.items) if (it.n.toLowerCase().includes(term)) hits.push({ b, text: it.n, q: it.q, p: it.p, x: expInfo(it.exp), o: isMed(it) ? openTxt(it) : '' });
       if ([b.name, b.location, b.category, b.notes].some(f => (f || '').toLowerCase().includes(term)))
         hits.push({ b, text: b.name || 'Box ' + b.id, boxMatch: true });
     }
@@ -546,7 +572,7 @@ function viewHome(focus = false) {
       <a class="hit card" href="#/box/${encodeURIComponent(h.b.id)}">
         <div class="n">${esc(h.b.id)}</div>
         <div><div style="font-weight:800;font-size:17px">${hl(h.text)}${h.q > 1 ? ` <span class="tag">×${h.q}</span>` : ''}</div>
-        ${h.x ? `<span class="exp ${h.x.cls}" style="display:inline-block;margin:4px 0">${h.x.days < 0 ? 'EXPIRED' : 'EXP'} ${h.x.label.toUpperCase()}</span>` : ''}
+        ${h.x ? `<span class="exp ${h.x.cls}" style="display:inline-block;margin:4px 0">${h.x.days < 0 ? 'EXPIRED' : 'EXP'} ${h.x.label.toUpperCase()}</span>` : ''}${h.o ? ` <span class="tag">${h.o}</span>` : ''}
         <div class="tag">${h.boxMatch ? 'box' : 'in ' + esc(h.b.name || 'Box ' + h.b.id)}${h.b.location ? ' · ' + esc(h.b.location) : ''}</div></div>
         ${h.p ? `<img class="hp" src="${h.p}" alt="">` : ''}
       </a>`).join('')}</div>` : `<div class="empty">Nothing matches “${esc(term)}”.</div>`;
@@ -615,7 +641,17 @@ function viewBox(id) {
           <input class="field" id="addi" placeholder="…or type: towels, 3x mugs" autocomplete="off">
           <button class="btn hot">Add</button>
         </form>
-        <ul class="items" id="items">${b.items.map((it, i) => `
+        <ul class="items" id="items">${b.items.map((it, i) => isMed(it) ? `
+          <li class="medrow">${it.p ? `<img class="it-ph" src="${it.p}" data-iv="${i}" alt="">` : `<label class="it-add" title="Add photo">＋<input type="file" accept="image/*" capture="environment" data-ip="${i}" hidden></label>`}
+            <div class="mcol">
+              <input class="nm" data-nm="${i}" value="${esc(it.n)}" placeholder="Medicine name…">
+              <div class="msub">
+                <span class="stp"><button data-qm="${i}" aria-label="one less">−</button><b>${it.q || 1}</b><button data-qp="${i}" aria-label="one more">+</button></span>
+                <button class="seal ${it.opened ? 'open' : ''}" data-op="${i}">${it.opened ? 'OPENED ' + shortDate(it.opened).toUpperCase() : 'SEALED'}</button>
+                ${expChip(it, i)}
+              </div>
+            </div>
+            <button class="x" data-del="${i}" aria-label="remove">✕</button></li>` : `
           <li>${it.p ? `<img class="it-ph" src="${it.p}" data-iv="${i}" alt="">` : `<label class="it-add" title="Add photo">＋<input type="file" accept="image/*" capture="environment" data-ip="${i}" hidden></label>`}
             <input class="nm" data-nm="${i}" value="${esc(it.n)}" placeholder="Name this item…">
             ${it.q > 1 ? `<em class="q">×${it.q}</em>` : ''}${expChip(it, i)}<button class="x" data-del="${i}" aria-label="remove">✕</button></li>`).join('') || '<li class="tag" style="border:none">Nothing logged yet — snap your first item.</li>'}
@@ -674,6 +710,20 @@ function viewBox(id) {
       b.items.splice(+t.dataset.del, 1); await save(b); return viewBox(id);
     }
     if (t.dataset.iv != null) showImg(b.items[+t.dataset.iv].p);
+    if (t.dataset.qp != null) { const it = b.items[+t.dataset.qp]; it.q = (it.q || 1) + 1; await save(b); return viewBox(id); }
+    if (t.dataset.qm != null) {
+      const i = +t.dataset.qm, it = b.items[i];
+      if ((it.q || 1) > 1) it.q = (it.q || 1) - 1;
+      else if (confirm(`Used up? Remove “${it.n || 'this medicine'}”?`)) b.items.splice(i, 1);
+      else return;
+      await save(b); return viewBox(id);
+    }
+    if (t.dataset.op != null) {
+      const it = b.items[+t.dataset.op];
+      if (it.opened) { if (!confirm('Mark as sealed again?')) return; it.opened = null; }
+      else it.opened = new Date().toISOString().slice(0, 10);
+      await save(b); toast(it.opened ? 'Marked opened today' : 'Marked sealed'); return viewBox(id);
+    }
   };
   $('#medi').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) medSheet(id, f); };
   items.onchange = async e => {
@@ -812,7 +862,7 @@ function viewExpiry() {
           <a href="#/box/${encodeURIComponent(r.b.id)}" style="display:flex;align-items:center;gap:12px;flex:1;min-width:0;text-decoration:none">
             ${r.it.p ? `<img class="hp" src="${r.it.p}" alt="" style="margin:0">` : `<div class="n" style="min-width:0">${esc(r.b.id)}</div>`}
             <div style="min-width:0"><div style="font-weight:800;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.it.n || 'Unnamed')}${r.it.q > 1 ? ` <span class="tag">×${r.it.q}</span>` : ''}</div>
-            <div class="tag">Box ${esc(r.b.id)}${r.b.location ? ' · ' + esc(r.b.location) : ''} · ${r.x.when}</div></div>
+            <div class="tag">Box ${esc(r.b.id)} · ${r.x.when}${isMed(r.it) ? ' · ' + openTxt(r.it) : ''}</div></div>
           </a>
           ${r.x.days < 0 ? `<button class="btn" data-gone="${esc(r.b.id)}|${r.i}" style="padding:8px 10px;font-size:11px">Thrown out</button>`
             : `<span class="exp ${r.x.cls}">${r.x.label.toUpperCase()}</span>`}

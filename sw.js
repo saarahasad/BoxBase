@@ -1,5 +1,5 @@
 // BOXBASE offline cache — bump VERSION after you update index.html
-const VERSION = 'boxbase-v4';
+const VERSION = 'boxbase-v5';
 const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './med.js'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
