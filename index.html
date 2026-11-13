@@ -439,7 +439,36 @@ const expChip = (it, i) => {
 };
 const isMed = it => !!(it.med || it.exp || it.opened !== undefined);
 const shortDate = iso => { const d = new Date(iso); return d.getDate() + ' ' + MONTHS[d.getMonth()]; };
-const openTxt = it => it.opened ? 'opened ' + shortDate(it.opened) : 'sealed';
+const openTxt = it => !it.opened ? 'sealed' : it.opened === 'unknown' ? 'opened' : 'opened ' + shortDate(it.opened);
+const openChip = it => !it.opened ? 'SEALED' : it.opened === 'unknown' ? 'OPENED · DATE ?' : 'OPENED ' + shortDate(it.opened).toUpperCase();
+const today = () => new Date().toISOString().slice(0, 10);
+/* small action sheet: when was it opened? → resolves ISO date | 'unknown' | null (sealed) | undefined (cancel) */
+function askOpened(it) {
+  return new Promise(res => {
+    const bg = document.createElement('div'); bg.className = 'sheet-bg';
+    const isOpen = !!it.opened;
+    bg.innerHTML = `<div class="msheet card">
+      <h2>${isOpen ? 'OPENED' : 'WHEN WAS IT OPENED?'}</h2>
+      <div class="tag" style="margin-top:-6px">${esc(it.n || 'This medicine')}${isOpen ? ' · ' + openTxt(it) : ''}</div>
+      <div class="stack">
+        <button class="btn hot big" data-a="today">Opened today</button>
+        <label class="btn big" style="text-align:center;position:relative">Pick the date…
+          <input type="date" max="${today()}" data-a="pick" style="position:absolute;inset:0;opacity:0;width:100%;font-size:16px"></label>
+        <button class="btn big" data-a="unknown">Opened — don’t know when</button>
+        ${isOpen ? '<button class="btn danger big" data-a="sealed">Still sealed</button>' : ''}
+        <button class="btn ghost" data-a="cancel">Cancel</button>
+      </div></div>`;
+    document.body.append(bg);
+    const done = v => { bg.remove(); res(v); };
+    bg.onclick = e => {
+      if (e.target === bg) return done(undefined);
+      const a = e.target.dataset.a;
+      if (a === 'today') done(today()); else if (a === 'unknown') done('unknown');
+      else if (a === 'sealed') done(null); else if (a === 'cancel') done(undefined);
+    };
+    bg.querySelector('[data-a=pick]').onchange = e => e.target.value && done(e.target.value);
+  });
+}
 const allExpiring = () => boxes.flatMap(b => b.items.map((it, i) => ({ it, i, b, x: expInfo(it.exp) })).filter(r => r.x))
   .sort((a, c) => a.x.days - c.x.days);
 
@@ -478,7 +507,9 @@ function medSheet(boxId, file) {
       <label style="flex:1;min-width:0"><div class="tag">Qty</div><input class="field" type="number" inputmode="numeric" min="1" id="mq" value="1"></label>
     </div>
     <div><div class="tag" style="margin-bottom:6px">Condition</div>
-      <div class="seg" id="mseg"><button type="button" class="on" data-v="0">Sealed</button><button type="button" data-v="1">Opened</button></div></div>
+      <div class="seg" id="mseg"><button type="button" class="on" data-v="0">Sealed</button><button type="button" data-v="1">Opened</button></div>
+      <label id="mowrap" style="display:none;margin-top:10px"><div class="tag">Opened on — leave blank if you don’t know</div>
+        <input class="field" type="date" id="mod" max="${today()}"></label></div>
     <div class="tag" id="mhint"></div>
     <label class="btn" style="text-align:center">📷 Snap the side with EXP<input type="file" accept="image/*" capture="environment" id="mext" hidden></label>
     <div class="row" style="flex-wrap:nowrap"><button class="btn ghost" id="mcancel" style="flex:1">Cancel</button><button class="btn hot" id="msave" style="flex:2">Save medicine</button></div>
@@ -490,7 +521,8 @@ function medSheet(boxId, file) {
   mn.oninput = () => touched.n = 1; mex.oninput = () => touched.e = 1;
   let scannedExp = null, photoP = compress(file), busy = 0, opened = false;
   $m('#mseg').onclick = e => { const v = e.target.dataset.v; if (v == null) return; opened = v === '1';
-    $m('#mseg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === e.target)); };
+    $m('#mseg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === e.target));
+    $m('#mowrap').style.display = opened ? '' : 'none'; };
   $m('#mimg').src = URL.createObjectURL(file);
   const close = () => bg.remove();
   $m('#mcancel').onclick = close;
@@ -517,7 +549,7 @@ function medSheet(boxId, file) {
     const n = mn.value.trim();
     if (!n && !mex.value) return toast('Add a name or expiry');
     const exp = mex.value ? (scannedExp && scannedExp.startsWith(mex.value) ? scannedExp : mex.value) : null;
-    b.items.push({ n, q: Math.max(1, parseInt($m('#mq').value) || 1), p: await photoP, exp, med: true, opened: opened ? new Date().toISOString().slice(0, 10) : null });
+    b.items.push({ n, q: Math.max(1, parseInt($m('#mq').value) || 1), p: await photoP, exp, med: true, opened: opened ? ($m('#mod').value || 'unknown') : null });
     await save(b); close(); toast('Saved ' + (n || 'medicine')); viewBox(boxId);
   };
 }
@@ -647,7 +679,7 @@ function viewBox(id) {
               <input class="nm" data-nm="${i}" value="${esc(it.n)}" placeholder="Medicine name…">
               <div class="msub">
                 <span class="stp"><button data-qm="${i}" aria-label="one less">−</button><b>${it.q || 1}</b><button data-qp="${i}" aria-label="one more">+</button></span>
-                <button class="seal ${it.opened ? 'open' : ''}" data-op="${i}">${it.opened ? 'OPENED ' + shortDate(it.opened).toUpperCase() : 'SEALED'}</button>
+                <button class="seal ${it.opened ? 'open' : ''}" data-op="${i}">${openChip(it)}</button>
                 ${expChip(it, i)}
               </div>
             </div>
@@ -720,9 +752,9 @@ function viewBox(id) {
     }
     if (t.dataset.op != null) {
       const it = b.items[+t.dataset.op];
-      if (it.opened) { if (!confirm('Mark as sealed again?')) return; it.opened = null; }
-      else it.opened = new Date().toISOString().slice(0, 10);
-      await save(b); toast(it.opened ? 'Marked opened today' : 'Marked sealed'); return viewBox(id);
+      const v = await askOpened(it);
+      if (v === undefined) return;
+      it.opened = v; await save(b); toast(openTxt(it).replace(/^./, c => c.toUpperCase())); return viewBox(id);
     }
   };
   $('#medi').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) medSheet(id, f); };
