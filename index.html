@@ -442,7 +442,9 @@ async function saveBackup(forceDownload = false) {
 const FAMILY_FILE = 'data.json';
 /* on open: pull the family copy if it's newer than what this phone has seen.
    Owner's own publishes are skipped; boxes removed from the family copy disappear on family phones. */
+const isManager = () => localStorage.getItem('bb-manager') === '1' || !!localStorage.getItem('bb-last');
 async function syncFamily() {
+  if (isManager()) return;   // the phone that manages the boxes is the source — never overwrite it
   try {
     const r = await fetch(FAMILY_FILE + '?t=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return;
@@ -506,6 +508,45 @@ async function compress(file) {
   c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
   return c.toDataURL('image/jpeg', 0.72);
+}
+
+/* ================= labels → PDF (prints from any phone) ================= */
+const loadScript = src => new Promise((res, rej) => {
+  if ([...document.scripts].some(s => s.src === src)) return res();
+  const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.append(s);
+});
+async function labelsPdf(ids, small) {
+  await loadScript(window.JSPDF_SRC || 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const M = 10, GAP = 5, cols = small ? 3 : 2;
+  const W = (210 - 2 * M - GAP * (cols - 1)) / cols, H = small ? 40 : 56;
+  const perPage = cols * Math.floor((297 - 2 * M + GAP) / (H + GAP));
+  ids.forEach((id, n) => {
+    if (n && n % perPage === 0) doc.addPage();
+    const k = n % perPage, x = M + (k % cols) * (W + GAP), y = M + Math.floor(k / cols) * (H + GAP);
+    doc.setDrawColor(20, 18, 16); doc.setLineWidth(0.8); doc.rect(x, y, W, H);
+    // QR as vector squares (sharp at any size)
+    const q = qrcode(0, 'M'); q.addData(boxUrl(id)); q.make();
+    const cnt = q.getModuleCount(), qs = H - 8, cell = qs / cnt, qx = x + 4, qy = y + 4;
+    doc.setFillColor(0, 0, 0);
+    for (let r = 0; r < cnt; r++) for (let c = 0; c < cnt; c++) if (q.isDark(r, c)) doc.rect(qx + c * cell, qy + r * cell, cell + 0.02, cell + 0.02, 'F');
+    const tx = qx + qs + 4, tw = x + W - tx - 3;
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(20, 18, 16);
+    doc.setFontSize(small ? 34 : 54); doc.text(id, tx, y + (small ? 17 : 24));
+    const b = byId(id);
+    doc.setFontSize(small ? 8.5 : 11);
+    if (b?.name) doc.text(doc.splitTextToSize(b.name, tw).slice(0, 2), tx, y + (small ? 24 : 33));
+    else { doc.setLineWidth(0.3); doc.line(tx, y + (small ? 26 : 36), tx + tw, y + (small ? 26 : 36)); }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(small ? 6 : 7.5);
+    doc.setLineWidth(0.5); doc.line(tx, y + H - (small ? 8 : 10), tx + tw, y + H - (small ? 8 : 10));
+    doc.text('SCAN TO SEE INSIDE', tx, y + H - (small ? 4.5 : 5.5));
+  });
+  const file = new File([doc.output('blob')], `boxbase-labels-${ids[0]}${ids.length > 1 ? '-' + ids[ids.length - 1] : ''}.pdf`, { type: 'application/pdf' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: 'BOXBASE labels' }); return; } catch (e) { if (e.name === 'AbortError') return; }
+  }
+  download(file); toast('Labels PDF downloaded — open it to print');
 }
 
 /* ================= expiry helpers ================= */
@@ -979,14 +1020,26 @@ function viewBox(id) {
   };
   $('#delbox').onclick = async () => {
     if (!confirm(`Delete Box ${b.id} and everything logged in it?`)) return;
-    await DB.del(b.id); boxes = boxes.filter(x => x !== b); location.hash = '#/';
+    await DB.del(b.id); boxes = boxes.filter(x => x !== b); markChanged();
+    const n = parseInt(b.id);
+    const after = sorted().filter(x => /^\d+$/.test(x.id) && parseInt(x.id) > n);
+    if (n && after.length && confirm(`Renumber the boxes after it?\n\n${after.map(x => x.id).join(', ')} → ${after.map(x => pad(parseInt(x.id) - 1)).join(', ')}\n\nTheir QR labels will need reprinting.`)) {
+      const moved = [];
+      for (const x of after) {                          // ascending, so the freed number is always empty
+        const nid = pad(parseInt(x.id) - 1);
+        await DB.del(x.id); x.id = nid; await save(x); moved.push(nid);
+      }
+      boxes = await DB.all();
+      toast('Renumbered — reprint these labels');
+      location.hash = '#/labels?only=' + moved.join(',');
+    } else { toast(`Box ${b.id} deleted`); location.hash = '#/'; }
   };
 }
 
 function viewLabels(params) {
   const only = params.get('only');
   const list = sorted();
-  const sel = new Set(only ? [only] : list.map(b => b.id));
+  const sel = new Set(only ? only.split(',') : list.map(b => b.id));
   app.innerHTML = `
     <div class="card lab-ctrl">
       <h2 style="font-family:var(--stencil);font-size:30px;margin-bottom:8px">PRINT LABELS</h2>
@@ -1001,10 +1054,16 @@ function viewLabels(params) {
       <div class="row"><span class="tag">Size:</span>
         <label class="chk"><input type="radio" name="sz" value="l" checked> Large (2 / row)</label>
         <label class="chk"><input type="radio" name="sz" value="s"> Small (3 / row)</label>
-        <button class="btn hot" id="pr" style="margin-left:auto">Print</button>
+        <button class="btn hot" id="pr" style="margin-left:auto">⎙ Print / PDF</button>
       </div>
     </div>
     <div class="sheet" id="sheet"></div>`;
+  const pickIds = () => {
+    const ids = [...app.querySelectorAll('.chk input[type=checkbox]:checked')].map(i => i.value);
+    const f = parseInt($('#from').value), t = parseInt($('#to').value);
+    if (f && t && t >= f && t - f < 300) for (let n = f; n <= t; n++) { const id = pad(n); if (!ids.includes(id)) ids.push(id); }
+    return ids.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  };
   const draw = () => {
     const ids = [...app.querySelectorAll('.chk input[type=checkbox]:checked')].map(i => i.value);
     const f = parseInt($('#from').value), t = parseInt($('#to').value);
@@ -1020,7 +1079,13 @@ function viewLabels(params) {
       || '<div class="empty" style="grid-column:1/-1">Pick boxes or a blank range.</div>';
   };
   app.querySelector('.lab-ctrl').addEventListener('input', draw);
-  $('#pr').onclick = () => window.print();
+  $('#pr').onclick = async () => {
+    const ids = pickIds(); if (!ids.length) return toast('Pick boxes or a blank range first');
+    const btn = $('#pr'), old = btn.textContent; btn.textContent = 'Making PDF…'; btn.disabled = true;
+    try { await labelsPdf(ids, app.querySelector('[name=sz]:checked').value === 's'); }
+    catch (e) { console.error(e); toast('Couldn’t make the PDF — check internet once'); }
+    btn.textContent = old; btn.disabled = false;
+  };
   draw();
 }
 
@@ -1040,6 +1105,8 @@ function viewData() {
     <section class="card panel" id="fam">
       <h2>FAMILY COPY <span class="tag">${+localStorage.getItem('bb-family-at') ? 'updated ' + ago(+localStorage.getItem('bb-family-at')) : '—'}</span></h2>
       <p>The boxes come preloaded for everyone who opens <b>${esc(location.host + location.pathname)}</b>, and refresh automatically when a newer copy is uploaded.</p>
+      <label class="chk" style="margin-top:6px;padding:10px 12px;display:flex;gap:10px"><input type="checkbox" id="mgr" ${isManager() ? 'checked' : ''} style="width:20px;height:20px">
+        <span style="font-family:var(--sans);font-size:14px;letter-spacing:0"><b>I manage the boxes on this phone</b> — never replace this phone’s boxes with the family copy</span></label>
     </section>
     <section class="card panel">
       <h2>QR LINK BASE</h2>
@@ -1051,6 +1118,7 @@ function viewData() {
       <h2>DANGER ZONE</h2>
       <div class="row"><button class="btn danger" id="wipe">Erase all boxes on this phone</button></div>
     </section></div>`;
+  $('#mgr').onchange = e => { e.target.checked ? localStorage.setItem('bb-manager', '1') : (localStorage.removeItem('bb-manager'), localStorage.removeItem('bb-last')); toast(e.target.checked ? 'This phone manages the boxes' : 'This phone follows the family copy'); };
   $('#ex').onclick = () => saveBackup();
   $('#dl').onclick = () => saveBackup(true);
   $('#im').onchange = e => e.target.files[0] && restoreBackup(e.target.files[0]);
