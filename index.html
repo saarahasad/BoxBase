@@ -538,7 +538,10 @@ function medSheet(boxId, file) {
       const gotExp = !!mex.value;
       st.className = 'ms-st ' + (gotExp && r.expSure ? 'good' : 'warn');
       st.textContent = gotExp ? (r.expSure ? '✓ Found it — check & save' : 'Check the expiry date ↓') : 'No expiry found — snap the EXP side, or pick it ↓';
-      hint.innerHTML = [r.via.includes('code') ? 'read from the pack’s code' : r.via.includes('text') ? 'read from printed text' : '',
+      const from = { code: 'the pack’s code', ai: 'smart reading', barcode: 'barcode lookup', text: 'printed text' };
+      hint.innerHTML = [[...new Set(r.via)].length ? 'read from ' + [...new Set(r.via)].map(v => from[v]).join(' + ') : '',
+        r.aiError ? '⚠ smart reading: ' + esc(r.aiError.slice(0, 80)) : '',
+        !MedScan.hasAI() && wantName && !r.via.includes('code') ? `<a href="#/data" onclick="this.closest('.sheet-bg').remove()">name wrong? turn on Smart reading →</a>` : '',
         r.batch ? 'batch ' + esc(r.batch) : '', r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">pack’s QR link ↗</a>` : ''].filter(Boolean).join(' · ');
     } catch (e) { console.error(e); st.className = 'ms-st warn'; st.textContent = 'Couldn’t read it — type it in'; pr.style.width = '100%'; }
     busy--;
@@ -552,6 +555,33 @@ function medSheet(boxId, file) {
     b.items.push({ n, q: Math.max(1, parseInt($m('#mq').value) || 1), p: await photoP, exp, med: true, opened: opened ? ($m('#mod').value || 'unknown') : null });
     await save(b); close(); toast('Saved ' + (n || 'medicine')); viewBox(boxId);
   };
+}
+
+/* ---------- name snapped items in the background (code → smart reading → barcode → text) ---------- */
+const naming = new Set();
+async function autoName(b, pairs) {
+  pairs.forEach(([it]) => naming.add(it));
+  const input = it => app.querySelector(`[data-nm="${b.items.indexOf(it)}"]`);
+  const mark = (it, txt) => { const el = input(it); if (el && !el.value) el.placeholder = txt; };
+  pairs.forEach(([it]) => mark(it, 'Reading name…'));
+  let named = 0, aiErr = null;
+  for (const [it, f] of pairs) {
+    try {
+      if (!b.items.includes(it) || it.n) continue;
+      const r = await MedScan.scan(f, { wantName: true, wantExp: true, textExp: false });
+      aiErr ||= r.aiError;
+      const el = input(it);
+      if (r.name && !it.n && !(el && el.value.trim())) {
+        it.n = r.name; if (el) el.value = r.name; named++;
+      }
+      if (r.exp && !it.exp) it.exp = r.exp;              // only from the pack's code or smart reading
+      if (r.name || r.exp) await save(b);
+    } catch (e) { console.warn(e); }
+    naming.delete(it); mark(it, 'Name this item…');
+  }
+  if (aiErr) toast('Smart reading: ' + aiErr.slice(0, 60));
+  else if (pairs.length > 1) toast(`Named ${named} of ${pairs.length} — check them`);
+  if (location.hash === '#/box/' + encodeURIComponent(b.id) && !document.activeElement?.matches?.('.nm')) viewBox(b.id);
 }
 
 /* ================= views ================= */
@@ -685,7 +715,7 @@ function viewBox(id) {
             </div>
             <button class="x" data-del="${i}" aria-label="remove">✕</button></li>` : `
           <li>${it.p ? `<img class="it-ph" src="${it.p}" data-iv="${i}" alt="">` : `<label class="it-add" title="Add photo">＋<input type="file" accept="image/*" capture="environment" data-ip="${i}" hidden></label>`}
-            <input class="nm" data-nm="${i}" value="${esc(it.n)}" placeholder="Name this item…">
+            <input class="nm" data-nm="${i}" value="${esc(it.n)}" placeholder="${naming.has(it) ? 'Reading name…' : 'Name this item…'}">
             ${it.q > 1 ? `<em class="q">×${it.q}</em>` : ''}${expChip(it, i)}<button class="x" data-del="${i}" aria-label="remove">✕</button></li>`).join('') || '<li class="tag" style="border:none">Nothing logged yet — snap your first item.</li>'}
         </ul>
         <label class="l"><div class="tag">Notes</div>
@@ -728,10 +758,10 @@ function viewBox(id) {
   $('#snapi').onchange = async e => {
     const files = [...e.target.files]; if (!files.length) return;
     toast(files.length > 1 ? `Adding ${files.length} items…` : 'Adding item…');
-    const start = b.items.length;
-    for (const f of files) b.items.push({ n: '', q: 1, p: await compress(f) });
+    const added = [];
+    for (const f of files) { const it = { n: '', q: 1, p: await compress(f) }; b.items.push(it); added.push([it, f]); }
     await save(b); viewBox(id);
-    app.querySelector(`[data-nm="${start}"]`)?.focus();
+    autoName(b, added);
   };
   const items = $('#items');
   items.onclick = async e => {
@@ -853,6 +883,14 @@ function viewData() {
           <label class="btn" style="flex:1;text-align:center">Load backup<input type="file" accept="application/json,.json" id="im" hidden></label></div>
       </div>
     </section>
+    <section class="card panel" id="smart">
+      <h2>SMART READING <span class="tag">${MedScan.hasAI() ? '● on' : 'optional'}</span></h2>
+      <p>Reads product names and expiry dates from photos <b>much more accurately</b>, using your own free Google Gemini key. Without it, BOXBASE uses barcodes + on-phone text reading.</p>
+      <p class="tag" style="line-height:1.6">1. Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> → <b>Create API key</b> (free, no card)<br>2. Paste it below → <b>Save &amp; test</b></p>
+      <input class="field" id="gk" type="password" autocomplete="off" placeholder="Paste Gemini API key (starts with AIza…)" value="${esc(localStorage.getItem('bb-gemini-key') || '')}">
+      <div class="row" style="margin-top:12px"><button class="btn hot" id="gks" style="flex:2">Save &amp; test</button>${MedScan.hasAI() ? '<button class="btn danger" id="gkr" style="flex:1">Turn off</button>' : ''}</div>
+      <p class="tag" style="margin-top:10px;line-height:1.5">The key stays on this phone. Photos you snap are sent to Google to be read; on the free tier Google may use them to improve its products. Free-tier daily limits apply — when reached, BOXBASE falls back to on-phone reading.</p>
+    </section>
     <section class="card panel">
       <h2>FAMILY'S PHONE</h2>
       <p>Send them the backup file (WhatsApp works). They open this app → <b>Load backup</b>. Re-send after big changes.</p>
@@ -867,6 +905,13 @@ function viewData() {
       <h2>DANGER ZONE</h2>
       <div class="row"><button class="btn danger" id="wipe">Erase all boxes on this phone</button></div>
     </section></div>`;
+  $('#gks').onclick = async () => {
+    const k = $('#gk').value.trim(); if (!k) return toast('Paste your key first');
+    const btn = $('#gks'); btn.textContent = 'Testing…'; btn.disabled = true;
+    try { const r = await MedScan.testKey(k); toast(r?.name ? `✓ Working — it read “${r.name}”` : '✓ Key saved'); viewData(); }
+    catch (e) { toast('✗ ' + (e.message || 'Key didn’t work').slice(0, 70)); btn.textContent = 'Save & test'; btn.disabled = false; }
+  };
+  $('#gkr')?.addEventListener('click', () => { localStorage.removeItem('bb-gemini-key'); localStorage.removeItem('bb-gemini-model'); toast('Smart reading off'); viewData(); });
   $('#ex').onclick = () => saveBackup();
   $('#dl').onclick = () => saveBackup(true);
   $('#im').onchange = e => e.target.files[0] && restoreBackup(e.target.files[0]);

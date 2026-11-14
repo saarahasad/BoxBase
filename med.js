@@ -97,6 +97,7 @@ const MedScan = (() => {
     const r = { name: null, exp: null, url: null, batch: null };
     const t = raw.trim();
     if (/^https?:\/\//i.test(t)) { r.url = t; return r; }
+    if (/^\d{8,14}$/.test(t) && !/^(01|02)\d{14}/.test(t)) { r.ean = t; return r; }   // EAN/UPC product barcode
     const g = parseGS1(t);
     if (g) { r.exp = gs1Date(g['17']); r.batch = g['10'] || null; if (g['21'] && !r.exp) r.batch ||= g['21']; return r; }
     let obj = null; try { obj = JSON.parse(t); } catch {}
@@ -221,39 +222,138 @@ const MedScan = (() => {
     return data;
   }
 
+  /* ---------------- product databases (barcode → name), free, no key ---------------- */
+  async function fetchT(url, opts = {}, ms = 8000) {
+    const c = new AbortController(); const t = setTimeout(() => c.abort(), ms);
+    try { return await fetch(url, { ...opts, signal: c.signal }); } finally { clearTimeout(t); }
+  }
+  async function lookupBarcode(code) {
+    const fields = 'product_name,product_name_en,brands,quantity,generic_name';
+    const tidy = p => {
+      if (!p) return null;
+      const nm = (p.product_name_en || p.product_name || p.generic_name || '').trim();
+      const brand = (p.brands || '').split(',')[0].trim();
+      if (!nm && !brand) return null;
+      const name = brand && nm && !nm.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${nm}` : (nm || brand);
+      return [name, (p.quantity || '').trim()].filter(Boolean).join(' ').slice(0, 60);
+    };
+    try {
+      const r = await fetchT(`https://world.openfoodfacts.org/api/v3/product/${code}?product_type=all&fields=${fields}`);
+      if (r.ok) { const j = await r.json(); const n = tidy(j.product); if (n) return n; }
+    } catch {}
+    for (const host of ['world.openbeautyfacts.org', 'world.openproductsfacts.org']) {
+      try {
+        const r = await fetchT(`https://${host}/api/v2/product/${code}.json?fields=${fields}`);
+        if (r.ok) { const j = await r.json(); const n = j.status === 1 && tidy(j.product); if (n) return n; }
+      } catch {}
+    }
+    return null;
+  }
+
+  /* ---------------- Smart reading: your own free Gemini key (optional) ---------------- */
+  const AI = {
+    key: () => localStorage.getItem('bb-gemini-key') || '',
+    MODELS: ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-flash-lite-latest'],
+  };
+  const PROMPT = `You are reading a photo of a product a person is storing at home (medicine, food, cosmetic, household item, etc).
+Return ONLY JSON: {"name": string|null, "expiry": string|null, "kind": "medicine"|"food"|"cosmetic"|"other"}.
+- name: the product's name as a shopper would say it, from the PACK: brand + product + strength/variant/size if printed. Short (max 6 words). Examples: "Dolo 650", "Crocin Advance", "Dettol Antiseptic Liquid 250ml", "Maggi Masala Noodles". Not the generic composition unless no brand is visible. null if you cannot read it.
+- expiry: the printed EXPIRY / use-before date only (never the manufacturing date), as "YYYY-MM" or "YYYY-MM-DD". null if not clearly visible.`;
+  async function askAI(file, onStatus) {
+    const key = AI.key(); if (!key) return null;
+    onStatus?.('Smart reading…', 0.3);
+    const data = (await scaledJpeg(file, 1024)).split(',')[1];
+    const body = JSON.stringify({
+      contents: [{ parts: [{ inline_data: { mime_type: 'image/jpeg', data } }, { text: PROMPT }] }],
+      generationConfig: { responseMimeType: 'application/json', temperature: 0 },
+    });
+    const tried = [localStorage.getItem('bb-gemini-model'), ...AI.MODELS].filter((m, i, a) => m && a.indexOf(m) === i);
+    let lastErr = 'No Gemini model available for this key';
+    for (const m of tried) {
+      const r = await fetchT(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body }, 25000);
+      if (r.status === 404) { lastErr = 'model ' + m + ' not found'; continue; }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error?.message || 'Smart reading failed (' + r.status + ')');
+      localStorage.setItem('bb-gemini-model', m);
+      const txt = (j.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').replace(/^```(?:json)?|```$/g, '').trim();
+      const o = JSON.parse(txt || '{}');
+      const exp = typeof o.expiry === 'string' ? pickExpiry('EXP ' + o.expiry.replace(/^(\d{4})-(\d{2})(?:-(\d{2}))?$/, (_, y, mo, d) => d ? `${d}/${mo}/${y}` : `${mo}/${y}`)).exp : null;
+      return { name: typeof o.name === 'string' && o.name.trim() ? o.name.trim().slice(0, 60) : null, exp, kind: o.kind || null, model: m };
+    }
+    throw new Error(lastErr);
+  }
+  async function scaledJpeg(file, max) {
+    const c = await canvasOf(file, max);
+    return c.toDataURL('image/jpeg', 0.8);
+  }
+  async function testKey(key) {
+    const prev = localStorage.getItem('bb-gemini-key');
+    localStorage.setItem('bb-gemini-key', key);
+    try {
+      const c = document.createElement('canvas'); c.width = 320; c.height = 120;
+      const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 320, 120); x.fillStyle = '#000'; x.font = 'bold 44px sans-serif'; x.fillText('DOLO 650', 20, 75);
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      return await askAI(blob);
+    } catch (e) { if (prev) localStorage.setItem('bb-gemini-key', prev); else localStorage.removeItem('bb-gemini-key'); throw e; }
+  }
+
   /* ---------------- main ---------------- */
-  /* scan(file, {onStatus}) → { name, exp, expSure, batch, url, via } */
-  async function scan(file, { onStatus = () => {}, wantName = true } = {}) {
-    const res = { name: null, exp: null, expSure: false, batch: null, url: null, via: [] };
-    onStatus('Looking for a code…');
+  /* scan(file, opts) → { name, exp, expSure, batch, url, via, aiError }
+     opts.wantName / opts.wantExp; opts.textExp=false ignores dates found by OCR (for non-medicine items) */
+  async function scan(file, { onStatus = () => {}, wantName = true, wantExp = true, textExp = true } = {}) {
+    const res = { name: null, exp: null, expSure: false, batch: null, url: null, ean: null, via: [], aiError: null };
+    const done = () => (!wantName || res.name) && (!wantExp || res.exp);
+    onStatus('Looking for a code…', 0.05);
     for (const raw of await decodeCodes(file)) {
       const r = parseCodeText(raw);
       if (r.url) res.url ||= r.url;
+      if (r.ean) res.ean ||= r.ean;
       if (r.exp && !res.exp) { res.exp = r.exp; res.expSure = true; res.via.push('code'); }
-      if (r.name && !res.name) res.name = r.name;
+      if (r.name && !res.name) { res.name = r.name; res.via.push('code'); }
       if (r.batch) res.batch ||= r.batch;
     }
-    if (res.exp && (res.name || !wantName)) return res;
+    if (done()) return res;
+    // 1) Smart reading (most accurate) if a key is set
+    if (AI.key()) {
+      try {
+        const a = await askAI(file, onStatus);
+        if (a) {
+          if (wantName && !res.name && a.name) { res.name = a.name; res.via.push('ai'); }
+          if (wantExp && !res.exp && a.exp) { res.exp = a.exp; res.expSure = true; res.via.push('ai'); }
+          res.kind = a.kind;
+        }
+      } catch (e) { res.aiError = e.message; console.warn(e); }
+      if (done()) return res;
+    }
+    // 2) product barcode → open product databases
+    if (wantName && !res.name && res.ean) {
+      onStatus('Looking up barcode…', 0.2);
+      const n = await lookupBarcode(res.ean);
+      if (n) { res.name = n; res.via.push('barcode'); }
+      if (done()) return res;
+    }
+    // 3) on-phone text reading
     const say = (m, a, b) => p => onStatus(m, a + (b - a) * (p || 0));
     let data, rot = 0;
     try {
-      data = await readText(file, say('Reading the label…', 0, 0.55), 0);
+      data = await readText(file, say('Reading the label…', 0.25, 0.6), 0);
       if (data.confidence < 55) {                       // photo probably sideways → try both turns, keep the clearest
         for (const r of [90, 270]) {
-          const d = await readText(file, say('Trying it sideways…', 0.55, 0.85), r);
+          const d = await readText(file, say('Trying it sideways…', 0.6, 0.85), r);
           if (d.confidence > data.confidence) { data = d; rot = r; }
         }
       }
     } catch (e) { onStatus('Couldn’t load the reader — check internet'); return res; }
-    if (!res.exp) { const e = pickExpiry(data.text); if (e.exp) { res.exp = e.exp; res.expSure = e.sure; res.via.push('text'); } }
+    if (wantExp && textExp && !res.exp) { const e = pickExpiry(data.text); if (e.exp) { res.exp = e.exp; res.expSure = e.sure; res.via.push('text'); } }
     if (wantName && !res.name && data.confidence >= 50) {
       let lines = data.lines;
       try { const small = await readText(file, say('Looking for the name…', 0.85, 1), rot, 700, true); lines = lines.concat(small.lines); } catch {}
-      res.name = guessName(lines);
+      res.name = guessName(lines); if (res.name) res.via.push('text');
     }
     return res;
   }
 
-  return { scan, pickExpiry, findDates, parseGS1, parseCodeText, guessName, endOf };
+  return { scan, pickExpiry, findDates, parseGS1, parseCodeText, guessName, endOf, lookupBarcode, askAI, testKey, hasAI: () => !!AI.key() };
 })();
 window.MedScan = MedScan;

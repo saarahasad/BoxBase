@@ -1,5 +1,5 @@
 // BOXBASE offline cache — bump VERSION after you update index.html
-const VERSION = 'boxbase-v6';
+const VERSION = 'boxbase-v7';
 const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './med.js'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
@@ -16,7 +16,16 @@ self.addEventListener('fetch', e => {
       .catch(() => caches.match('./index.html')));
     return;
   }
-  // fonts, QR lib, icons: cache first
+  // only cache our own files + code libraries; never product lookups or AI calls
+  const LIBS = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net'];
+  if (url.origin !== location.origin && !LIBS.includes(url.origin)) return;
+  // our app code: network first so updates arrive, cache when offline
+  if (url.origin === location.origin && /\.(js|json)$/.test(url.pathname)) {
+    e.respondWith(fetch(e.request).then(r => { const c = r.clone(); caches.open(VERSION).then(x => x.put(e.request, c)); return r; })
+      .catch(() => caches.match(e.request)));
+    return;
+  }
+  // fonts, QR/OCR libraries, icons: cache first
   e.respondWith(caches.match(e.request).then(hit => hit || fetch(e.request).then(r => {
     if (r.ok || r.type === 'opaque') { const copy = r.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); }
     return r;
