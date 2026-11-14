@@ -395,6 +395,73 @@ async function saveBackup(forceDownload = false) {
   } else { download(file); markBackedUp(); toast('Backup downloaded ✓'); }
   render();
 }
+/* ---------- family copy: data.json in the GitHub repo ---------- */
+const FAMILY_FILE = 'data.json';
+const repoGuess = () => {
+  const owner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : '';
+  const repo = location.pathname.split('/').filter(Boolean)[0] || '';
+  return { owner: localStorage.getItem('bb-gh-owner') || owner, repo: localStorage.getItem('bb-gh-repo') || repo };
+};
+async function shrinkPhoto(src, max = 480) {
+  try {
+    const img = await createImageBitmap(await (await fetch(src)).blob());
+    const s = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.6);
+  } catch { return null; }
+}
+/* family copy = all boxes, photos shrunk to keep the file light */
+async function familyJson() {
+  const out = [];
+  for (const b of sorted()) {
+    out.push({ ...b,
+      photos: (await Promise.all(b.photos.map(p => shrinkPhoto(p)))).filter(Boolean),
+      items: await Promise.all(b.items.map(async it => ({ ...it, p: it.p ? await shrinkPhoto(it.p) : undefined }))) });
+  }
+  return JSON.stringify({ app: 'boxbase', v: 1, family: true, at: Date.now(), boxes: out });
+}
+const blobB64 = blob => new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result.split(',')[1]); f.readAsDataURL(blob); });
+async function publishFamily(onStatus = () => {}) {
+  const tok = localStorage.getItem('bb-gh-token'); const { owner, repo } = repoGuess();
+  if (!tok || !owner || !repo) throw new Error('Add your GitHub token first');
+  onStatus('Preparing…');
+  const json = await familyJson(); const at = JSON.parse(json).at;
+  const api = `https://api.github.com/repos/${owner}/${repo}/contents/${FAMILY_FILE}`;
+  const H = { Authorization: 'Bearer ' + tok, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+  onStatus('Checking repo…');
+  const cur = await fetch(api + '?ref=main', { headers: H });
+  if (cur.status === 401 || cur.status === 403) throw new Error('Token not allowed — check its repo + Contents permission');
+  const sha = cur.ok ? (await cur.json()).sha : undefined;
+  onStatus(`Uploading ${(json.length / 1048576).toFixed(1)} MB…`);
+  const r = await fetch(api, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'Update family copy (BOXBASE)', content: await blobB64(new Blob([json])), sha, branch: 'main' }) });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.message || 'Upload failed (' + r.status + ')'); }
+  localStorage.setItem('bb-published-at', at);
+  return at;
+}
+/* on open: pull the family copy if it's newer than what this phone has seen.
+   Owner's own publishes are skipped; boxes removed from the family copy disappear on family phones. */
+async function syncFamily() {
+  try {
+    const r = await fetch(FAMILY_FILE + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json(); if (!Array.isArray(data.boxes) || !data.at) return;
+    if (data.at <= (+localStorage.getItem('bb-published-at') || 0)) return;   // this phone published it
+    if (data.at <= (+localStorage.getItem('bb-family-at') || 0)) return;      // already loaded
+    const prevIds = JSON.parse(localStorage.getItem('bb-family-ids') || '[]');
+    const ids = data.boxes.map(b => b.id);
+    for (const id of prevIds) if (!ids.includes(id)) { const cur = byId(id); if (cur && (cur.updated || 0) <= data.at) await DB.del(id); }
+    for (const b of data.boxes) {
+      const cur = byId(b.id);
+      if (!cur || (b.updated || 0) > (cur.updated || 0)) await DB.put({ ...newBox(b.id), ...b });   // strictly newer only — never swap your full photos for the shared small ones
+    }
+    localStorage.setItem('bb-family-at', data.at); localStorage.setItem('bb-family-ids', JSON.stringify(ids));
+    boxes = await DB.all(); render();
+    toast('Family copy updated · ' + new Date(data.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }));
+  } catch (e) { console.warn('family sync', e); }
+}
+
 async function restoreBackup(file) {
   try {
     const data = JSON.parse(await file.text());
@@ -888,9 +955,28 @@ function viewData() {
           <label class="btn" style="flex:1;text-align:center">Load backup<input type="file" accept="application/json,.json" id="im" hidden></label></div>
       </div>
     </section>
-    <section class="card panel">
-      <h2>FAMILY'S PHONE</h2>
-      <p>Send them the backup file (WhatsApp works). They open this app → <b>Load backup</b>. Re-send after big changes.</p>
+    <section class="card panel" id="fam">
+      <h2>FAMILY COPY <span class="tag">${+localStorage.getItem('bb-published-at') ? 'published ' + ago(+localStorage.getItem('bb-published-at')) : 'not published'}</span></h2>
+      <p>Publish your boxes to GitHub. Family just open <b>${esc(location.host + location.pathname)}</b> and see everything — it refreshes each time they open the app.</p>
+      <p class="tag" style="line-height:1.55;color:#8a1c00">⚠ Your repo is public: anyone with the link can see the list and photos. Photos are shrunk in the shared copy.</p>
+      <div class="stack" style="margin-top:12px">
+        <button class="btn hot big" id="pub" ${localStorage.getItem('bb-gh-token') ? '' : 'disabled style="opacity:.5"'}>⇪ Publish for family</button>
+        <div class="tag" id="pubst"></div>
+      </div>
+      <details style="margin-top:14px"><summary class="tag" style="cursor:pointer">${localStorage.getItem('bb-gh-token') ? '✓ GitHub connected — change' : 'One-time setup: connect GitHub'}</summary>
+        <p class="tag" style="line-height:1.6;margin:10px 0">1. github.com → Settings → Developer settings → <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained tokens → Generate</a><br>
+        2. Repository access: <b>Only select → ${esc(repoGuess().repo || 'BoxBase')}</b><br>3. Permissions → Repository → <b>Contents: Read and write</b> → Generate → paste below</p>
+        <input class="field" id="ght" type="password" autocomplete="off" placeholder="github_pat_…" value="${esc(localStorage.getItem('bb-gh-token') || '')}">
+        <div class="row" style="margin-top:10px;gap:8px">
+          <input class="field" id="gho" placeholder="owner" value="${esc(repoGuess().owner)}" style="flex:1;min-width:0">
+          <input class="field" id="ghr" placeholder="repo" value="${esc(repoGuess().repo)}" style="flex:1;min-width:0"></div>
+        <div class="row" style="margin-top:10px"><button class="btn" id="ghs" style="flex:1">Save</button>${localStorage.getItem('bb-gh-token') ? '<button class="btn danger" id="ghx" style="flex:1">Disconnect</button>' : ''}</div>
+        <p class="tag" style="margin-top:8px">The token stays on this phone only.</p>
+      </details>
+      <details style="margin-top:10px"><summary class="tag" style="cursor:pointer">No token? Upload by hand</summary>
+        <p class="tag" style="line-height:1.6;margin:10px 0">Download the file → on GitHub open your repo → <b>Add file → Upload files</b> → drop <code>data.json</code> → Commit.</p>
+        <button class="btn" id="famdl">Download data.json</button>
+      </details>
     </section>
     <section class="card panel">
       <h2>QR LINK BASE</h2>
@@ -902,6 +988,25 @@ function viewData() {
       <h2>DANGER ZONE</h2>
       <div class="row"><button class="btn danger" id="wipe">Erase all boxes on this phone</button></div>
     </section></div>`;
+  const pst = $('#pubst');
+  $('#pub').onclick = async () => {
+    const btn = $('#pub'); btn.disabled = true;
+    try { await publishFamily(m => pst.textContent = m); pst.textContent = '✓ Published — family will see it in about a minute.'; toast('Published for family ✓'); }
+    catch (e) { pst.textContent = '✗ ' + e.message; }
+    btn.disabled = false;
+  };
+  $('#ghs').onclick = () => {
+    const t = $('#ght').value.trim();
+    t ? localStorage.setItem('bb-gh-token', t) : localStorage.removeItem('bb-gh-token');
+    localStorage.setItem('bb-gh-owner', $('#gho').value.trim()); localStorage.setItem('bb-gh-repo', $('#ghr').value.trim());
+    toast(t ? 'GitHub connected' : 'Saved'); viewData();
+  };
+  $('#ghx')?.addEventListener('click', () => { localStorage.removeItem('bb-gh-token'); toast('Disconnected'); viewData(); });
+  $('#famdl').onclick = async () => {
+    const json = await familyJson();
+    localStorage.setItem('bb-published-at', JSON.parse(json).at);
+    download(new File([json], 'data.json', { type: 'application/json' }));
+  };
   $('#ex').onclick = () => saveBackup();
   $('#dl').onclick = () => saveBackup(true);
   $('#im').onchange = e => e.target.files[0] && restoreBackup(e.target.files[0]);
@@ -1011,7 +1116,7 @@ async function render() {
 }
 window.addEventListener('hashchange', render);
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
-(async () => { boxes = await DB.all(); render(); })();
+(async () => { boxes = await DB.all(); render(); syncFamily(); })();
 </script>
 </body>
 </html>

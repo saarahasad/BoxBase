@@ -1,5 +1,5 @@
 // BOXBASE offline cache — bump VERSION after you update index.html
-const VERSION = 'boxbase-v9';
+const VERSION = 'boxbase-v10';
 const CORE = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './med.js'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
@@ -16,6 +16,8 @@ self.addEventListener('fetch', e => {
       .catch(() => caches.match('./index.html')));
     return;
   }
+  // family copy is always fetched live
+  if (url.origin === location.origin && url.pathname.endsWith('/data.json')) return;
   // fonts, QR lib, icons: cache first
   e.respondWith(caches.match(e.request).then(hit => hit || fetch(e.request).then(r => {
     if (r.ok || r.type === 'opaque') { const copy = r.clone(); caches.open(VERSION).then(c => c.put(e.request, copy)); }
