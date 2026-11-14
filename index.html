@@ -241,6 +241,26 @@ code{font-family:var(--mono);font-size:.88em;background:var(--tape);padding:1px 
 .seg button+button{border-left:2.5px solid var(--ink)}
 .seg button.on{background:var(--ink);color:var(--paper)}
 
+/* ---------- move items between boxes ---------- */
+.selbtn{border:2px solid var(--ink);background:#fff;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;padding:6px 10px;text-transform:uppercase}
+.selbtn.on{background:var(--ink);color:var(--paper)}
+.pick{flex:none;width:26px;height:26px;accent-color:var(--hot);margin:0}
+.items.selecting li{cursor:pointer}
+.items.selecting li > *:not(.pick), .items.selecting li .mcol *{pointer-events:none}
+.items.selecting .x{display:none}
+.items.selecting li.picked{background:rgba(255,79,18,.12)}
+.movebar{position:fixed;left:0;right:0;bottom:calc(76px + env(safe-area-inset-bottom));z-index:25;display:flex;gap:10px;align-items:center;
+  padding:12px max(16px,env(safe-area-inset-right)) 12px max(16px,env(safe-area-inset-left));background:var(--ink);color:var(--paper);border-top:3px solid var(--hot)}
+.movebar b{font-family:var(--stencil);font-size:21px;letter-spacing:.03em;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.movebar .btn{padding:10px 11px;white-space:nowrap}
+.movebar .btn{box-shadow:none}
+.boxpick{display:flex;flex-direction:column;gap:10px;max-height:55vh;overflow:auto;padding:2px 6px 6px 2px}
+.boxpick button{display:flex;align-items:center;gap:14px;text-align:left;padding:10px 12px;background:#fff;border:2.5px solid var(--ink);box-shadow:3px 3px 0 var(--ink)}
+.boxpick button:active{transform:translate(3px,3px);box-shadow:none}
+.boxpick .n{font-family:var(--stencil);font-weight:900;font-size:40px;line-height:.9;min-width:56px}
+.boxpick .t{font-weight:800;font-size:16px;line-height:1.15}
+.boxpick .new{background:var(--hot)}
+
 /* ---------- phone ---------- */
 @media(max-width:600px){
   main{padding-top:16px}
@@ -660,7 +680,7 @@ function viewBox(id) {
 
     <div class="cols">
       <section class="card panel">
-        <h2>INSIDE <span class="tag">${b.items.length} items</span></h2>
+        <h2>INSIDE <span class="row" style="gap:10px"><span class="tag">${b.items.length} items</span>${b.items.length ? `<button class="selbtn ${sel ? 'on' : ''}" id="selt">${sel ? 'Done' : 'Select'}</button>` : ''}</span></h2>
         <label class="snap">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 8h4l2-3h6l2 3h4v12H3z"/><circle cx="12" cy="13.5" r="3.8"/></svg>
           SNAP AN ITEM
@@ -673,8 +693,8 @@ function viewBox(id) {
           <input class="field" id="addi" placeholder="…or type: towels, 3x mugs" autocomplete="off">
           <button class="btn hot">Add</button>
         </form>
-        <ul class="items" id="items">${b.items.map((it, i) => isMed(it) ? `
-          <li class="medrow">${it.p ? `<img class="it-ph" src="${it.p}" data-iv="${i}" alt="">` : `<label class="it-add" title="Add photo">＋<input type="file" accept="image/*" capture="environment" data-ip="${i}" hidden></label>`}
+        <ul class="items ${sel ? 'selecting' : ''}" id="items">${b.items.map((it, i) => isMed(it) ? `
+          <li class="medrow ${sel?.set.has(i) ? 'picked' : ''}" data-row="${i}">${sel ? `<input type="checkbox" class="pick" data-pk="${i}" ${sel.set.has(i) ? 'checked' : ''}>` : ''}${it.p ? `<img class="it-ph" src="${it.p}" data-iv="${i}" alt="">` : `<label class="it-add" title="Add photo">＋<input type="file" accept="image/*" capture="environment" data-ip="${i}" hidden></label>`}
             <div class="mcol">
               <input class="nm" data-nm="${i}" value="${esc(it.n)}" placeholder="Medicine name…">
               <div class="msub">
@@ -684,7 +704,7 @@ function viewBox(id) {
               </div>
             </div>
             <button class="x" data-del="${i}" aria-label="remove">✕</button></li>` : `
-          <li>${it.p ? `<img class="it-ph" src="${it.p}" data-iv="${i}" alt="">` : `<label class="it-add" title="Add photo">＋<input type="file" accept="image/*" capture="environment" data-ip="${i}" hidden></label>`}
+          <li class="${sel?.set.has(i) ? 'picked' : ''}" data-row="${i}">${sel ? `<input type="checkbox" class="pick" data-pk="${i}" ${sel.set.has(i) ? 'checked' : ''}>` : ''}${it.p ? `<img class="it-ph" src="${it.p}" data-iv="${i}" alt="">` : `<label class="it-add" title="Add photo">＋<input type="file" accept="image/*" capture="environment" data-ip="${i}" hidden></label>`}
             <input class="nm" data-nm="${i}" value="${esc(it.n)}" placeholder="Name this item…">
             ${it.q > 1 ? `<em class="q">×${it.q}</em>` : ''}${expChip(it, i)}<button class="x" data-del="${i}" aria-label="remove">✕</button></li>`).join('') || '<li class="tag" style="border:none">Nothing logged yet — snap your first item.</li>'}
         </ul>
@@ -734,8 +754,23 @@ function viewBox(id) {
     app.querySelector(`[data-nm="${start}"]`)?.focus();
   };
   const items = $('#items');
+  if (sel && sel.box !== id) sel = null;
+  $('#selt')?.addEventListener('click', () => { sel = sel ? null : { box: id, set: new Set() }; viewBox(id); });
+  if (sel) {
+    const bar = document.createElement('div'); bar.className = 'movebar';
+    bar.innerHTML = `<b>${sel.set.size} SELECTED</b><button class="btn" id="mall">${sel.set.size === b.items.length ? 'None' : 'All'}</button><button class="btn hot" id="mgo" ${sel.set.size ? '' : 'disabled style="opacity:.5"'}>Move to box →</button>`;
+    app.append(bar);
+    $('#mall').onclick = () => { sel.set = sel.set.size === b.items.length ? new Set() : new Set(b.items.map((_, i) => i)); viewBox(id); };
+    $('#mgo').onclick = () => sel.set.size && moveSelected(id);
+  }
   items.onclick = async e => {
     const t = e.target;
+    if (sel) {
+      const row = t.closest('[data-row]'); if (!row) return;
+      const i = +row.dataset.row;
+      sel.set.has(i) ? sel.set.delete(i) : sel.set.add(i);
+      const y = scrollY; viewBox(id); scrollTo(0, y); return;
+    }
     if (t.dataset.del != null) {
       const it = b.items[+t.dataset.del];
       if ((it.p || it.n) && !confirm(`Remove “${it.n || 'this item'}”?`)) return;
@@ -912,6 +947,47 @@ function viewExpiry() {
   });
 }
 
+/* ================= move items between boxes ================= */
+let sel = null;            // { box, set:Set<index> } while selecting
+function pickBox(fromId, count) {
+  return new Promise(res => {
+    const bg = document.createElement('div'); bg.className = 'sheet-bg';
+    const others = sorted().filter(x => x.id !== fromId);
+    bg.innerHTML = `<div class="msheet card">
+      <h2>MOVE ${count} ITEM${count > 1 ? 'S' : ''} TO…</h2>
+      <div class="boxpick">
+        <button class="new" data-to="__new"><span class="n">+</span><span class="t">New box (Box ${esc(nextId())})</span></button>
+        ${others.map(x => `<button data-to="${esc(x.id)}"><span class="n">${esc(x.id)}</span><span><span class="t">${esc(x.name || 'Untitled box')}</span>
+          <div class="tag">${x.items.length} items${x.location ? ' · ' + esc(x.location) : ''}</div></span></button>`).join('')}
+      </div>
+      <button class="btn ghost" data-to="">Cancel</button></div>`;
+    document.body.append(bg);
+    bg.onclick = e => {
+      if (e.target === bg) { bg.remove(); return res(null); }
+      const t = e.target.closest('[data-to]'); if (!t) return;
+      bg.remove(); res(t.dataset.to || null);
+    };
+  });
+}
+async function moveSelected(fromId) {
+  const from = byId(fromId), idx = [...sel.set].sort((a, b) => a - b);
+  if (!idx.length) return;
+  let to = await pickBox(fromId, idx.length);
+  if (!to) return;
+  let dest;
+  if (to === '__new') { dest = newBox(nextId()); boxes.push(dest); } else dest = byId(to);
+  const moving = idx.map(i => from.items[i]);
+  from.items = from.items.filter((_, i) => !sel.set.has(i));
+  dest.items.push(...moving);
+  await save(from); await save(dest);
+  sel = null;
+  toast(`Moved ${moving.length} to Box ${dest.id}`);
+  viewBox(fromId);
+  const bar = document.createElement('div'); bar.className = 'movebar';
+  bar.innerHTML = `<b>MOVED TO BOX ${esc(dest.id)}</b><a class="btn hot" href="#/box/${encodeURIComponent(dest.id)}">Open Box ${esc(dest.id)}</a><button class="btn" id="mvx">✕</button>`;
+  app.append(bar); bar.querySelector('#mvx').onclick = () => bar.remove(); setTimeout(() => bar.remove(), 6000);
+}
+
 /* ================= router ================= */
 async function render() {
   const [path, qs] = location.hash.slice(1).split('?');
@@ -925,6 +1001,7 @@ async function render() {
     ? `<a class="back" href="#/"><b>‹</b> Boxes</a><span class="ttl">BOX ${esc(decodeURIComponent(parts[1] || ''))}</span>`
     : `<a class="logo" href="#/">BOX<span>BASE</span></a>${titles[route] ? `<span class="ttl" style="color:#9b9183">${titles[route]}</span>` : ''}`;
   window.scrollTo(0, 0);
+  if (sel && !(route === 'box' && decodeURIComponent(parts[1] || '') === sel.box)) sel = null;
   if (route === 'new') { const b = newBox(nextId()); boxes.push(b); await save(b); location.replace('#/box/' + b.id); return; }
   if (route === 'box') return viewBox(decodeURIComponent(parts[1] || ''));
   if (route === 'labels') return viewLabels(params);
