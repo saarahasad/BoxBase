@@ -261,6 +261,49 @@ code{font-family:var(--mono);font-size:.88em;background:var(--tape);padding:1px 
 .boxpick .t{font-weight:800;font-size:16px;line-height:1.15}
 .boxpick .new{background:var(--hot)}
 
+/* ---------- box VIEW mode: photo grid ---------- */
+.modeseg{display:flex;border:2.5px solid var(--ink);margin-bottom:18px;background:#fff;box-shadow:3px 3px 0 var(--ink)}
+.modeseg button{flex:1;padding:11px 6px;border:none;background:transparent;font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+.modeseg button+button{border-left:2.5px solid var(--ink)}
+.modeseg button.on{background:var(--ink);color:var(--paper)}
+.vhead{display:flex;align-items:flex-end;gap:16px;margin-bottom:16px}
+.vhead .bignum{font-size:clamp(96px,24vw,150px)}
+.vhead h1{font-size:clamp(24px,6vw,40px);font-weight:800;line-height:1.05}
+.vhead .tag{margin-top:6px}
+.vtools{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
+.vtools .search{box-shadow:4px 4px 0 var(--ink)}
+.vtools .search input{font-size:17px;padding:11px 0}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 4px}
+.chip{flex:none;border:2px solid var(--ink);background:#fff;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.06em;padding:8px 11px;text-transform:uppercase}
+.chip.on{background:var(--ink);color:var(--paper)}
+.chip i{font-style:normal;opacity:.6;margin-left:4px}
+.boxshots{display:flex;gap:10px;overflow-x:auto;margin-bottom:16px;padding-bottom:4px}
+.boxshots img{height:110px;border:3px solid var(--ink);flex:none;cursor:zoom-in}
+.vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:16px}
+.tile{position:relative;display:flex;flex-direction:column;text-align:left;background:var(--paper);border:3px solid var(--ink);
+  box-shadow:4px 4px 0 var(--ink);padding:0;overflow:hidden;font:inherit;color:inherit}
+.tile:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--ink)}
+.tile img,.tile .ph{width:100%;aspect-ratio:1;object-fit:cover;display:block;border-bottom:3px solid var(--ink);background:#fff}
+.tile .ph{display:grid;place-items:center;font-family:var(--stencil);font-weight:900;font-size:70px;color:var(--ink);
+  background:repeating-linear-gradient(92deg,rgba(0,0,0,.04) 0 2px,transparent 2px 7px),var(--tape)}
+.tile .tn{font-weight:800;font-size:15px;line-height:1.18;padding:8px 10px 2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tile .tm{display:flex;gap:4px;flex-wrap:wrap;padding:6px 10px 10px;margin-top:auto}
+.tile .tm .exp{font-size:9px;padding:4px 5px}
+.tile .tm .op{font-family:var(--mono);font-size:9px;font-weight:700;padding:4px 5px;background:var(--ink);color:var(--paper);letter-spacing:.04em}
+.tile .qb{position:absolute;top:8px;right:8px;background:var(--ink);color:var(--paper);font-family:var(--mono);font-size:13px;font-weight:700;padding:4px 8px;border:2px solid var(--paper)}
+.tile.bad{border-color:#d7261e;box-shadow:4px 4px 0 #d7261e}
+.tile.bad img,.tile.bad .ph{border-bottom-color:#d7261e}
+.detail img{width:100%;max-height:52vh;object-fit:contain;background:#fff;border:3px solid var(--ink)}
+.detail h2{font-size:30px !important}
+.detail .facts{display:flex;gap:8px;flex-wrap:wrap}
+.detail .facts span{font-family:var(--mono);font-size:12px;font-weight:700;padding:7px 10px;border:2px solid var(--ink);background:#fff}
+.detail .facts .bad{background:#d7261e;color:#fff}.detail .facts .warn{background:#ffb000}.detail .facts .ok{background:#2f9e44;color:#fff}
+@media(max-width:600px){
+  .vgrid{grid-template-columns:1fr 1fr;gap:12px}
+  .tile .ph{font-size:56px}
+  .tile .tn{font-size:14px}
+}
+
 /* ---------- phone ---------- */
 @media(max-width:600px){
   main{padding-top:16px}
@@ -397,49 +440,6 @@ async function saveBackup(forceDownload = false) {
 }
 /* ---------- family copy: data.json in the GitHub repo ---------- */
 const FAMILY_FILE = 'data.json';
-const repoGuess = () => {
-  const owner = location.hostname.endsWith('.github.io') ? location.hostname.split('.')[0] : '';
-  const repo = location.pathname.split('/').filter(Boolean)[0] || '';
-  return { owner: localStorage.getItem('bb-gh-owner') || owner, repo: localStorage.getItem('bb-gh-repo') || repo };
-};
-async function shrinkPhoto(src, max = 480) {
-  try {
-    const img = await createImageBitmap(await (await fetch(src)).blob());
-    const s = Math.min(1, max / Math.max(img.width, img.height));
-    const c = document.createElement('canvas'); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    return c.toDataURL('image/jpeg', 0.6);
-  } catch { return null; }
-}
-/* family copy = all boxes, photos shrunk to keep the file light */
-async function familyJson() {
-  const out = [];
-  for (const b of sorted()) {
-    out.push({ ...b,
-      photos: (await Promise.all(b.photos.map(p => shrinkPhoto(p)))).filter(Boolean),
-      items: await Promise.all(b.items.map(async it => ({ ...it, p: it.p ? await shrinkPhoto(it.p) : undefined }))) });
-  }
-  return JSON.stringify({ app: 'boxbase', v: 1, family: true, at: Date.now(), boxes: out });
-}
-const blobB64 = blob => new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result.split(',')[1]); f.readAsDataURL(blob); });
-async function publishFamily(onStatus = () => {}) {
-  const tok = localStorage.getItem('bb-gh-token'); const { owner, repo } = repoGuess();
-  if (!tok || !owner || !repo) throw new Error('Add your GitHub token first');
-  onStatus('Preparing…');
-  const json = await familyJson(); const at = JSON.parse(json).at;
-  const api = `https://api.github.com/repos/${owner}/${repo}/contents/${FAMILY_FILE}`;
-  const H = { Authorization: 'Bearer ' + tok, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
-  onStatus('Checking repo…');
-  const cur = await fetch(api + '?ref=main', { headers: H });
-  if (cur.status === 401 || cur.status === 403) throw new Error('Token not allowed — check its repo + Contents permission');
-  const sha = cur.ok ? (await cur.json()).sha : undefined;
-  onStatus(`Uploading ${(json.length / 1048576).toFixed(1)} MB…`);
-  const r = await fetch(api, { method: 'PUT', headers: { ...H, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: 'Update family copy (BOXBASE)', content: await blobB64(new Blob([json])), sha, branch: 'main' }) });
-  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.message || 'Upload failed (' + r.status + ')'); }
-  localStorage.setItem('bb-published-at', at);
-  return at;
-}
 /* on open: pull the family copy if it's newer than what this phone has seen.
    Owner's own publishes are skipped; boxes removed from the family copy disappear on family phones. */
 async function syncFamily() {
@@ -724,13 +724,94 @@ function viewMissing(id) {
       <button class="btn hot" id="mk">Set up Box ${esc(id)}</button>
       <a class="btn" href="#/data">Import backup</a>
     </div></div>`;
-  $('#mk').onclick = async () => { const b = newBox(id); boxes.push(b); await save(b); render(); };
+  $('#mk').onclick = async () => { const b = newBox(id); boxes.push(b); await save(b); forceEdit = id; render(); };
+}
+
+/* ---------- VIEW mode (default): big photo grid, read-only ---------- */
+const boxMode = () => localStorage.getItem('bb-boxmode') || 'view';
+let forceEdit = null;                                   // a box just created opens in edit mode
+const gv = { q: '', f: 'all', s: 'added' };             // gallery search / filter / sort
+const modeSeg = m => `<div class="modeseg"><button data-mode="view" class="${m === 'view' ? 'on' : ''}">▦ View</button><button data-mode="edit" class="${m === 'edit' ? 'on' : ''}">✎ Edit</button></div>`;
+function bindMode(id) {
+  app.querySelectorAll('[data-mode]').forEach(btn => btn.onclick = () => {
+    localStorage.setItem('bb-boxmode', btn.dataset.mode); forceEdit = null; viewBox(id); scrollTo(0, 0);
+  });
+}
+function itemDetail(b, it) {
+  const x = expInfo(it.exp);
+  const bg = document.createElement('div'); bg.className = 'sheet-bg';
+  bg.innerHTML = `<div class="msheet card detail">
+    ${it.p ? `<img src="${it.p}" alt="">` : ''}
+    <h2>${esc(it.n || 'Unnamed item')}</h2>
+    <div class="facts">
+      <span>QTY ${it.q || 1}</span>
+      ${x ? `<span class="${x.cls}">${x.days < 0 ? 'EXPIRED' : 'EXP'} ${x.label.toUpperCase()} · ${x.when.toUpperCase()}</span>` : ''}
+      ${isMed(it) ? `<span>${openTxt(it).toUpperCase()}</span>` : ''}
+      <span>BOX ${esc(b.id)}${b.location ? ' · ' + esc(b.location).toUpperCase() : ''}</span>
+    </div>
+    <button class="btn big" data-x>Close</button></div>`;
+  document.body.append(bg);
+  bg.onclick = e => { if (e.target === bg || e.target.dataset.x != null) bg.remove(); };
+}
+function viewBoxGallery(id) {
+  const b = byId(id);
+  const rows = b.items.map((it, i) => ({ it, i, x: expInfo(it.exp) }));
+  const hasExp = rows.some(r => r.x), hasOpen = rows.some(r => r.it.opened);
+  const nExp = rows.filter(r => r.x && r.x.days <= 60).length, nOpen = rows.filter(r => r.it.opened).length;
+  if (gv.box !== id) { gv.box = id; gv.q = ''; gv.f = 'all'; gv.s = 'added'; }
+  app.innerHTML = `
+    ${modeSeg('view')}
+    <div class="vhead"><div class="bignum">${esc(b.id)}</div>
+      <div style="min-width:0"><h1>${esc(b.name || 'Untitled box')}</h1>
+      <div class="tag">${b.items.length} items${b.location ? ' · ' + esc(b.location) : ''}${b.category ? ' · ' + esc(b.category) : ''}</div></div></div>
+    ${b.photos.length ? `<div class="boxshots">${b.photos.map((p, i) => `<img src="${p}" data-bs="${i}" alt="">`).join('')}</div>` : ''}
+    ${b.items.length > 6 || hasExp ? `<div class="vtools">
+      ${b.items.length > 6 ? `<div class="search"><b>⌕</b><input id="vq" placeholder="Find in this box…" value="${esc(gv.q)}" autocomplete="off" enterkeyhint="search"></div>` : ''}
+      <div class="chips">
+        <button class="chip ${gv.f === 'all' ? 'on' : ''}" data-f="all">All<i>${b.items.length}</i></button>
+        ${hasExp ? `<button class="chip ${gv.f === 'exp' ? 'on' : ''}" data-f="exp">Expiring<i>${nExp}</i></button>` : ''}
+        ${hasOpen ? `<button class="chip ${gv.f === 'open' ? 'on' : ''}" data-f="open">Opened<i>${nOpen}</i></button>` : ''}
+        <span style="flex:none;width:8px"></span>
+        <button class="chip ${gv.s === 'added' ? 'on' : ''}" data-s="added">Newest</button>
+        <button class="chip ${gv.s === 'az' ? 'on' : ''}" data-s="az">A–Z</button>
+        ${hasExp ? `<button class="chip ${gv.s === 'exp' ? 'on' : ''}" data-s="exp">By expiry</button>` : ''}
+      </div></div>` : ''}
+    <div class="vgrid" id="vgrid"></div>
+    ${b.notes ? `<div class="card panel" style="margin-top:20px"><div class="tag">Notes</div><p style="margin-top:6px">${esc(b.notes)}</p></div>` : ''}`;
+  const draw = () => {
+    const term = gv.q.trim().toLowerCase();
+    let list = rows.filter(r => (!term || (r.it.n || '').toLowerCase().includes(term))
+      && (gv.f !== 'exp' || (r.x && r.x.days <= 60)) && (gv.f !== 'open' || r.it.opened));
+    if (gv.s === 'added') list = list.slice().reverse();
+    if (gv.s === 'az') list = list.slice().sort((a, c) => (a.it.n || '~').localeCompare(c.it.n || '~'));
+    if (gv.s === 'exp') list = list.slice().sort((a, c) => (a.x ? a.x.days : 1e9) - (c.x ? c.x.days : 1e9));
+    $('#vgrid').innerHTML = list.map(({ it, i, x }) => `
+      <button class="tile ${x && x.days < 0 ? 'bad' : ''}" data-t="${i}">
+        ${it.p ? `<img src="${it.p}" alt="" loading="lazy">` : `<div class="ph">${esc((it.n || '?').trim()[0] || '?').toUpperCase()}</div>`}
+        ${(it.q || 1) > 1 ? `<span class="qb">×${it.q}</span>` : ''}
+        <div class="tn">${esc(it.n || 'Unnamed')}</div>
+        ${x || it.opened ? `<div class="tm">${x ? `<span class="exp ${x.cls}">${x.days < 0 ? 'EXPIRED' : 'EXP ' + x.label.toUpperCase()}</span>` : ''}${it.opened ? '<span class="op">OPENED</span>' : ''}</div>` : ''}
+      </button>`).join('') || `<div class="empty" style="grid-column:1/-1">${b.items.length ? 'Nothing matches.' : 'This box is empty.<br>Switch to <b>✎ Edit</b> to add items.'}</div>`;
+  };
+  draw();
+  bindMode(id);
+  $('#vq')?.addEventListener('input', e => { gv.q = e.target.value; draw(); });
+  $('#vq')?.addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+  app.querySelectorAll('.chip[data-f]').forEach(c => c.onclick = () => { gv.f = c.dataset.f; viewBoxGallery(id); });
+  app.querySelectorAll('.chip[data-s]').forEach(c => c.onclick = () => { gv.s = c.dataset.s; viewBoxGallery(id); });
+  $('#vgrid').onclick = e => { const t = e.target.closest('[data-t]'); if (t) itemDetail(b, b.items[+t.dataset.t]); };
+  app.querySelector('.boxshots')?.addEventListener('click', e => {
+    const i = e.target.dataset.bs; if (i == null) return;
+    const lb = document.createElement('div'); lb.className = 'lightbox'; lb.innerHTML = `<img src="${b.photos[+i]}">`; lb.onclick = () => lb.remove(); document.body.append(lb);
+  });
 }
 
 function viewBox(id) {
   const b = byId(id);
   if (!b) return viewMissing(id);
+  if (boxMode() === 'view' && forceEdit !== id && !sel) return viewBoxGallery(id);
   app.innerHTML = `
+    ${modeSeg('edit')}
     <div class="head">
       <div class="bignum">${esc(b.id)}</div>
       <div>
@@ -800,6 +881,7 @@ function viewBox(id) {
       </section>
     </div>`;
 
+  bindMode(id);
   app.querySelectorAll('[data-f]').forEach(el => el.addEventListener('change', async () => { b[el.dataset.f] = el.value.trim(); await save(b); toast('Saved'); }));
   $('#addf').onsubmit = async e => {
     e.preventDefault();
@@ -956,27 +1038,8 @@ function viewData() {
       </div>
     </section>
     <section class="card panel" id="fam">
-      <h2>FAMILY COPY <span class="tag">${+localStorage.getItem('bb-published-at') ? 'published ' + ago(+localStorage.getItem('bb-published-at')) : 'not published'}</span></h2>
-      <p>Publish your boxes to GitHub. Family just open <b>${esc(location.host + location.pathname)}</b> and see everything — it refreshes each time they open the app.</p>
-      <p class="tag" style="line-height:1.55;color:#8a1c00">⚠ Your repo is public: anyone with the link can see the list and photos. Photos are shrunk in the shared copy.</p>
-      <div class="stack" style="margin-top:12px">
-        <button class="btn hot big" id="pub" ${localStorage.getItem('bb-gh-token') ? '' : 'disabled style="opacity:.5"'}>⇪ Publish for family</button>
-        <div class="tag" id="pubst"></div>
-      </div>
-      <details style="margin-top:14px"><summary class="tag" style="cursor:pointer">${localStorage.getItem('bb-gh-token') ? '✓ GitHub connected — change' : 'One-time setup: connect GitHub'}</summary>
-        <p class="tag" style="line-height:1.6;margin:10px 0">1. github.com → Settings → Developer settings → <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained tokens → Generate</a><br>
-        2. Repository access: <b>Only select → ${esc(repoGuess().repo || 'BoxBase')}</b><br>3. Permissions → Repository → <b>Contents: Read and write</b> → Generate → paste below</p>
-        <input class="field" id="ght" type="password" autocomplete="off" placeholder="github_pat_…" value="${esc(localStorage.getItem('bb-gh-token') || '')}">
-        <div class="row" style="margin-top:10px;gap:8px">
-          <input class="field" id="gho" placeholder="owner" value="${esc(repoGuess().owner)}" style="flex:1;min-width:0">
-          <input class="field" id="ghr" placeholder="repo" value="${esc(repoGuess().repo)}" style="flex:1;min-width:0"></div>
-        <div class="row" style="margin-top:10px"><button class="btn" id="ghs" style="flex:1">Save</button>${localStorage.getItem('bb-gh-token') ? '<button class="btn danger" id="ghx" style="flex:1">Disconnect</button>' : ''}</div>
-        <p class="tag" style="margin-top:8px">The token stays on this phone only.</p>
-      </details>
-      <details style="margin-top:10px"><summary class="tag" style="cursor:pointer">No token? Upload by hand</summary>
-        <p class="tag" style="line-height:1.6;margin:10px 0">Download the file → on GitHub open your repo → <b>Add file → Upload files</b> → drop <code>data.json</code> → Commit.</p>
-        <button class="btn" id="famdl">Download data.json</button>
-      </details>
+      <h2>FAMILY COPY <span class="tag">${+localStorage.getItem('bb-family-at') ? 'updated ' + ago(+localStorage.getItem('bb-family-at')) : '—'}</span></h2>
+      <p>The boxes come preloaded for everyone who opens <b>${esc(location.host + location.pathname)}</b>, and refresh automatically when a newer copy is uploaded.</p>
     </section>
     <section class="card panel">
       <h2>QR LINK BASE</h2>
@@ -988,25 +1051,6 @@ function viewData() {
       <h2>DANGER ZONE</h2>
       <div class="row"><button class="btn danger" id="wipe">Erase all boxes on this phone</button></div>
     </section></div>`;
-  const pst = $('#pubst');
-  $('#pub').onclick = async () => {
-    const btn = $('#pub'); btn.disabled = true;
-    try { await publishFamily(m => pst.textContent = m); pst.textContent = '✓ Published — family will see it in about a minute.'; toast('Published for family ✓'); }
-    catch (e) { pst.textContent = '✗ ' + e.message; }
-    btn.disabled = false;
-  };
-  $('#ghs').onclick = () => {
-    const t = $('#ght').value.trim();
-    t ? localStorage.setItem('bb-gh-token', t) : localStorage.removeItem('bb-gh-token');
-    localStorage.setItem('bb-gh-owner', $('#gho').value.trim()); localStorage.setItem('bb-gh-repo', $('#ghr').value.trim());
-    toast(t ? 'GitHub connected' : 'Saved'); viewData();
-  };
-  $('#ghx')?.addEventListener('click', () => { localStorage.removeItem('bb-gh-token'); toast('Disconnected'); viewData(); });
-  $('#famdl').onclick = async () => {
-    const json = await familyJson();
-    localStorage.setItem('bb-published-at', JSON.parse(json).at);
-    download(new File([json], 'data.json', { type: 'application/json' }));
-  };
   $('#ex').onclick = () => saveBackup();
   $('#dl').onclick = () => saveBackup(true);
   $('#im').onchange = e => e.target.files[0] && restoreBackup(e.target.files[0]);
@@ -1107,7 +1151,7 @@ async function render() {
     : `<a class="logo" href="#/">BOX<span>BASE</span></a>${titles[route] ? `<span class="ttl" style="color:#9b9183">${titles[route]}</span>` : ''}`;
   window.scrollTo(0, 0);
   if (sel && !(route === 'box' && decodeURIComponent(parts[1] || '') === sel.box)) sel = null;
-  if (route === 'new') { const b = newBox(nextId()); boxes.push(b); await save(b); location.replace('#/box/' + b.id); return; }
+  if (route === 'new') { const b = newBox(nextId()); boxes.push(b); await save(b); forceEdit = b.id; location.replace('#/box/' + b.id); return; }
   if (route === 'box') return viewBox(decodeURIComponent(parts[1] || ''));
   if (route === 'labels') return viewLabels(params);
   if (route === 'data') return viewData();
