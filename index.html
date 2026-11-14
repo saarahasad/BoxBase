@@ -510,6 +510,20 @@ async function compress(file) {
   return c.toDataURL('image/jpeg', 0.72);
 }
 
+/* ================= renumber: close gaps so boxes run 01, 02, 03… ================= */
+const numbered = () => sorted().filter(x => /^\d+$/.test(x.id));
+const gapPlan = () => numbered().map((x, i) => [x.id, pad(i + 1)]).filter(([a, b]) => a !== b);
+async function renumberAll() {
+  const plan = gapPlan(); if (!plan.length) return toast('Numbers are already in order');
+  if (!confirm(`Renumber boxes?\n\n${plan.map(([a]) => a).join(', ')} → ${plan.map(([, b]) => b).join(', ')}\n\nTheir QR labels will need reprinting.`)) return;
+  for (const [from, to] of plan) {                    // ascending: each new number is always free
+    const b = byId(from); await DB.del(from); b.id = to; await save(b);
+  }
+  boxes = await DB.all();
+  toast('Renumbered — reprint these labels');
+  location.hash = '#/labels?only=' + plan.map(([, b]) => b).join(',');
+}
+
 /* ================= labels → PDF (prints from any phone) ================= */
 const loadScript = src => new Promise((res, rej) => {
   if ([...document.scripts].some(s => s.src === src)) return res();
@@ -703,6 +717,7 @@ function viewHome(focus = false) {
   const dirty = changes(), last = +localStorage.getItem('bb-last') || 0;
   app.innerHTML = `
     ${boxes.length && dirty ? `<div class="banner card"><div><b>${dirty} change${dirty > 1 ? 's' : ''} not backed up</b><div class="tag" style="color:var(--ink)">last backup: ${ago(last)}</div></div><button class="btn ink" id="bk">Save backup</button></div>` : ''}
+    ${gapPlan().length ? `<div class="banner card" style="background:var(--tape)"><div><b>Box numbers have gaps</b><div class="tag" style="color:var(--ink)">${numbered().map(x => x.id).join(', ')} → start from 01</div></div><button class="btn ink" id="renum">Renumber</button></div>` : ''}
     <div class="search"><b>⌕</b><input id="q" placeholder="Where's the… passport? charger? winter quilt?" autocomplete="off" enterkeyhint="search"></div>
     ${expStrip()}
     <div class="stats">
@@ -712,6 +727,7 @@ function viewHome(focus = false) {
     </div>
     <div id="results"></div>`;
   $('#bk')?.addEventListener('click', () => saveBackup());
+  $('#renum')?.addEventListener('click', renumberAll);
   const input = $('#q');
   const draw = () => {
     const term = input.value.trim().toLowerCase();
@@ -1021,18 +1037,8 @@ function viewBox(id) {
   $('#delbox').onclick = async () => {
     if (!confirm(`Delete Box ${b.id} and everything logged in it?`)) return;
     await DB.del(b.id); boxes = boxes.filter(x => x !== b); markChanged();
-    const n = parseInt(b.id);
-    const after = sorted().filter(x => /^\d+$/.test(x.id) && parseInt(x.id) > n);
-    if (n && after.length && confirm(`Renumber the boxes after it?\n\n${after.map(x => x.id).join(', ')} → ${after.map(x => pad(parseInt(x.id) - 1)).join(', ')}\n\nTheir QR labels will need reprinting.`)) {
-      const moved = [];
-      for (const x of after) {                          // ascending, so the freed number is always empty
-        const nid = pad(parseInt(x.id) - 1);
-        await DB.del(x.id); x.id = nid; await save(x); moved.push(nid);
-      }
-      boxes = await DB.all();
-      toast('Renumbered — reprint these labels');
-      location.hash = '#/labels?only=' + moved.join(',');
-    } else { toast(`Box ${b.id} deleted`); location.hash = '#/'; }
+    if (gapPlan().length) { location.hash = '#/'; await renumberAll(); return; }
+    toast(`Box ${b.id} deleted`); location.hash = '#/';
   };
 }
 
